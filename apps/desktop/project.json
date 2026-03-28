@@ -1,0 +1,21 @@
+{
+  "name": "desktop",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "apps/desktop/src",
+  "projectType": "application",
+  "tags": ["type:app", "platform:desktop"],
+  "targets": {
+    "dev": {
+      "command": "npx tauri dev",
+      "options": {
+        "cwd": "apps/desktop"
+      }
+    },
+    "build": {
+      "command": "npx tauri build",
+      "options": {
+        "cwd": "apps/desktop"
+      }
+    }
+  }
+}

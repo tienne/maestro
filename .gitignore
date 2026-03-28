@@ -1,0 +1,27 @@
+# Node
+node_modules/
+.next/
+out/
+dist/
+
+# Rust / Cargo
+target/
+apps/desktop/gen/
+
+# NX
+.nx/cache/
+.nx/workspace-data/
+
+# OS
+.DS_Store
+*.swp
+
+# Env
+.env
+.env.local
+.env.*.local
+
+# SQLite
+*.db
+*.db-shm
+*.db-wal

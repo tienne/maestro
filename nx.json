@@ -1,0 +1,22 @@
+{
+  "$schema": "./node_modules/nx/schemas/nx-schema.json",
+  "targetDefaults": {
+    "build": {
+      "cache": true
+    },
+    "test": {
+      "cache": true
+    },
+    "lint": {
+      "cache": true
+    },
+    "typecheck": {
+      "cache": true
+    }
+  },
+  "namedInputs": {
+    "default": ["{projectRoot}/**/*", "sharedGlobals"],
+    "sharedGlobals": ["{workspaceRoot}/tsconfig.base.json"]
+  },
+  "defaultProject": "web"
+}

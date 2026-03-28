@@ -1,0 +1,22 @@
+{
+  "name": "maestro",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "nx run web:dev",
+    "tauri": "tauri dev --config apps/desktop/tauri.conf.json",
+    "tauri:build": "tauri build --config apps/desktop/tauri.conf.json",
+    "build": "nx run-many --target=build",
+    "lint": "nx run-many --target=lint",
+    "typecheck": "nx run-many --target=typecheck"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.10.1",
+    "nx": "22.6.2",
+    "typescript": "^5.4.5"
+  }
+}
