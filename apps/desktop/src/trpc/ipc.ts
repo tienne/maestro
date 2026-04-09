@@ -19,6 +19,25 @@ import type { AppRouter } from './router';
 
 const CHANNEL = 'electron-trpc';
 
+// JSON-RPC 숫자 에러 코드 — electron-trpc renderer의 TRPCClientError.from()이
+// error.code를 숫자로 기대해야 정상 파싱됨 (문자열이면 "Unknown error"로 폴백)
+const TRPC_ERROR_CODES: Record<string, number> = {
+  PARSE_ERROR: -32700,
+  BAD_REQUEST: -32600,
+  INTERNAL_SERVER_ERROR: -32603,
+  NOT_FOUND: -32004,
+  METHOD_NOT_SUPPORTED: -32005,
+  TIMEOUT: -32008,
+  CONFLICT: -32009,
+  PRECONDITION_FAILED: -32012,
+  PAYLOAD_TOO_LARGE: -32013,
+  UNPROCESSABLE_CONTENT: -32022,
+  TOO_MANY_REQUESTS: -32029,
+  CLIENT_CLOSED_REQUEST: -32099,
+  UNAUTHORIZED: -32001,
+  FORBIDDEN: -32003,
+};
+
 type OperationType = 'query' | 'mutation' | 'subscription';
 
 interface Operation {
@@ -50,7 +69,14 @@ async function handleRequest(
   };
 
   const replyError = (code: string, message: string) => {
-    reply({ id, error: { code, message } });
+    reply({
+      id,
+      error: {
+        code: TRPC_ERROR_CODES[code] ?? TRPC_ERROR_CODES['INTERNAL_SERVER_ERROR'],
+        message,
+        data: { code, httpStatus: 500, path },
+      },
+    });
   };
 
   try {
@@ -66,7 +92,6 @@ async function handleRequest(
       // 구독 처리
       const result = await (proc as (opts: unknown) => unknown)({
         ctx: {},
-        rawInput: input,
         path,
         type,
         getRawInput: async () => input,
@@ -94,7 +119,6 @@ async function handleRequest(
     // query / mutation 처리
     const data = await (proc as (opts: unknown) => Promise<unknown>)({
       ctx: {},
-      rawInput: input,
       path,
       type,
       getRawInput: async () => input,
