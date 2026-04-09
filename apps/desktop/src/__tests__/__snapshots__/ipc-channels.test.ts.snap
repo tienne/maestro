@@ -1,0 +1,20 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`IPC 채널 일관성 > 채널명 목록을 출력한다 (진단용) 1`] = `
+{
+  "mainPushChannels": [
+    "session-output",
+    "session-status",
+    "ui-focus",
+    "ui-sidebar",
+    "ui-tabs",
+  ],
+  "rendererListenChannels": [
+    "session-output",
+    "session-status",
+    "ui-focus",
+    "ui-sidebar",
+    "ui-tabs",
+  ],
+}
+`;
