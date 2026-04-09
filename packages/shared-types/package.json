@@ -9,5 +9,9 @@
   },
   "devDependencies": {
     "typescript": "^5.4.5"
+  },
+  "dependencies": {
+    "@trpc/server": "^11.16.0",
+    "zod": "^4.3.6"
   }
 }
