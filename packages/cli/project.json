@@ -1,0 +1,21 @@
+{
+  "name": "cli",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "projectType": "library",
+  "sourceRoot": "packages/cli/src",
+  "tags": ["type:cli"],
+  "targets": {
+    "build": {
+      "command": "tsc",
+      "options": {
+        "cwd": "packages/cli"
+      }
+    },
+    "typecheck": {
+      "command": "tsc --noEmit",
+      "options": {
+        "cwd": "packages/cli"
+      }
+    }
+  }
+}
