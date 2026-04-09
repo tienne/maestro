@@ -5,14 +5,38 @@
   "projectType": "application",
   "tags": ["type:app", "platform:desktop"],
   "targets": {
+    "rebuild": {
+      "command": "electron-rebuild -f -w better-sqlite3,node-pty",
+      "options": {
+        "cwd": "apps/desktop"
+      }
+    },
     "dev": {
-      "command": "npx tauri dev",
+      "command": "electron-vite dev",
       "options": {
         "cwd": "apps/desktop"
       }
     },
     "build": {
-      "command": "npx tauri build",
+      "command": "electron-vite build && electron-builder",
+      "options": {
+        "cwd": "apps/desktop"
+      }
+    },
+    "build:mac": {
+      "command": "electron-vite build && electron-builder --mac",
+      "options": {
+        "cwd": "apps/desktop"
+      }
+    },
+    "build:win": {
+      "command": "electron-vite build && electron-builder --win",
+      "options": {
+        "cwd": "apps/desktop"
+      }
+    },
+    "typecheck": {
+      "command": "tsc --noEmit",
       "options": {
         "cwd": "apps/desktop"
       }

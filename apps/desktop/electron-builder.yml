@@ -1,0 +1,55 @@
+appId: com.maestro.desktop
+productName: Maestro
+copyright: Copyright © 2024 Maestro
+
+# native module (better-sqlite3, node-pty) 재빌드 필수
+npmRebuild: true
+
+directories:
+  buildResources: icons
+  output: dist-build
+
+files:
+  - out/**/*
+  - node_modules/**/*
+  - package.json
+
+extraResources:
+  - from: icons
+    to: icons
+
+mac:
+  category: public.app-category.developer-tools
+  icon: icons/icon.icns
+  # 코드사이닝 없이 테스트 가능하도록 설정
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  # Apple Silicon + Intel 모두 지원
+  target:
+    - target: dmg
+      arch:
+        - arm64
+        - x64
+
+dmg:
+  title: Maestro
+  icon: icons/icon.icns
+
+win:
+  icon: icons/icon.ico
+  # Windows x64 빌드
+  target:
+    - target: nsis
+      arch:
+        - x64
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+
+# GitHub Releases 퍼블리싱 (draft)
+publish:
+  provider: github
+  releaseType: draft
