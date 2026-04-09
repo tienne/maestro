@@ -7,16 +7,27 @@
     "packages/*"
   ],
   "scripts": {
-    "dev": "nx run web:dev",
-    "tauri": "tauri dev --config apps/desktop/tauri.conf.json",
-    "tauri:build": "tauri build --config apps/desktop/tauri.conf.json",
-    "build": "nx run-many --target=build",
+    "dev": "nx run desktop:dev",
+    "build": "nx run desktop:build",
+    "build:mac": "nx run desktop:build:mac",
+    "build:win": "nx run desktop:build:win",
     "lint": "nx run-many --target=lint",
     "typecheck": "nx run-many --target=typecheck"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2.10.1",
+    "concurrently": "^9.2.1",
     "nx": "22.6.2",
-    "typescript": "^5.4.5"
+    "typescript": "^5.4.5",
+    "wait-on": "^9.0.4"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "better-sqlite3",
+      "electron",
+      "node-pty",
+      "nx",
+      "sharp",
+      "unrs-resolver"
+    ]
   }
 }

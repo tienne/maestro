@@ -1,5 +1,8 @@
 {
   "$schema": "./node_modules/nx/schemas/nx-schema.json",
+  "installation": {
+    "version": "22.6.2"
+  },
   "targetDefaults": {
     "build": {
       "cache": true
@@ -15,8 +18,14 @@
     }
   },
   "namedInputs": {
-    "default": ["{projectRoot}/**/*", "sharedGlobals"],
-    "sharedGlobals": ["{workspaceRoot}/tsconfig.base.json"]
+    "default": [
+      "{projectRoot}/**/*",
+      "sharedGlobals"
+    ],
+    "sharedGlobals": [
+      "{workspaceRoot}/tsconfig.base.json"
+    ]
   },
-  "defaultProject": "web"
+  "defaultProject": "desktop",
+  "analytics": false
 }

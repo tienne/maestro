@@ -25,3 +25,13 @@ apps/desktop/gen/
 *.db
 *.db-shm
 *.db-wal
+
+# Electron build output
+apps/desktop/dist-build/
+apps/desktop/out/
+
+#claude
+.claude/settings.local.json
+
+#_workspace
+_workspace
