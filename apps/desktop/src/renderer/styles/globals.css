@@ -1,0 +1,124 @@
+@import "tailwindcss";
+
+/* ── Font size levels ──────────────────────────────────────────────────────── */
+:root {
+  --font-size-base: 14px; /* medium default */
+}
+
+:root[data-font-size="small"] {
+  --font-size-base: 12px;
+}
+
+:root[data-font-size="medium"] {
+  --font-size-base: 14px;
+}
+
+:root[data-font-size="large"] {
+  --font-size-base: 16px;
+}
+
+/* ── Dark theme: Superset Warm Dark ───────────────────────────────────────── */
+:root,
+:root.dark {
+  --bg-primary: #151110;
+  --bg-secondary: #1a1716;
+  --bg-panel: #201e1c;
+  --bg-hover: #252220;
+  --bg-active: #2a2827;
+
+  --text-primary: #eae8e6;
+  --text-secondary: #a8a5a3;
+  --text-muted: #5a5755;
+
+  --accent: #e07850;
+  --accent-hover: #e88c6a;
+
+  --border: #2a2827;
+  --border-subtle: #201e1c;
+
+  --tab-active-bg: #2a2827;
+  --tab-active-text: #eae8e6;
+  --tab-inactive-bg: #1a1716;
+  --tab-inactive-text: #a8a5a3;
+
+  --terminal-bg: #0e0c0b;
+
+  --background: #151110;
+  --foreground: #eae8e6;
+}
+
+/* ── Light theme: Superset Neutral Light ──────────────────────────────────── */
+:root.light {
+  --bg-primary: #f5f4f2;
+  --bg-secondary: #eeedea;
+  --bg-panel: #ffffff;
+  --bg-hover: #e8e6e2;
+  --bg-active: #e0ddd8;
+
+  --text-primary: #1c1a19;
+  --text-secondary: #6b6866;
+  --text-muted: #9e9b98;
+
+  --accent: #c0623c;
+  --accent-hover: #a8512e;
+
+  --border: #e5e3de;
+  --border-subtle: #f0efec;
+
+  --tab-active-bg: #ffffff;
+  --tab-active-text: #1c1a19;
+  --tab-inactive-bg: #eeedea;
+  --tab-inactive-text: #9e9b98;
+
+  --terminal-bg: #1e1e1e;
+
+  --background: #f5f4f2;
+  --foreground: #1c1a19;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: var(--font-size-base);
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+/* ── react-mosaic-component overrides ─────────────────────────────────────── */
+.maestro-mosaic {
+  @apply h-full w-full;
+}
+
+.mosaic-blueprint-theme .mosaic-window .mosaic-window-toolbar {
+  background-color: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+  height: 32px;
+}
+
+.mosaic-blueprint-theme .mosaic-window-title {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.mosaic-blueprint-theme .mosaic-split {
+  background: var(--border);
+}
+
+.mosaic-blueprint-theme .mosaic-split:hover {
+  background: var(--accent);
+}
+
+.mosaic-blueprint-theme .mosaic-window {
+  background-color: var(--bg-primary);
+  border: 1px solid var(--border);
+}
+
+.mosaic-blueprint-theme .mosaic-drop-target.drop-target-hover .drop-target-container {
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+}
