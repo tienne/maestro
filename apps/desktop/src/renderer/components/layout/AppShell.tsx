@@ -10,6 +10,8 @@ import { useLayoutStore } from '../../store/layoutStore';
 import { Toaster } from 'sonner';
 import { useTheme } from '../ThemeProvider';
 import { UpdateBanner } from '../UpdateBanner';
+import { ErrorBoundary } from 'react-error-boundary';
+import { ErrorFallback } from '../ErrorFallback';
 
 const MIN_SIDEBAR = 160;
 const MAX_SIDEBAR = 520;
@@ -75,7 +77,9 @@ export function AppShell() {
           style={{ width: sidebarWidth, backgroundColor: 'var(--bg-secondary)' }}
           className="flex-shrink-0 flex flex-col"
         >
-          <LeftSidebar />
+          <ErrorBoundary FallbackComponent={(props) => <ErrorFallback {...props} panelName="사이드바" />}>
+            <LeftSidebar />
+          </ErrorBoundary>
         </div>
 
         {/* Left Resize Handle */}
@@ -94,7 +98,9 @@ export function AppShell() {
         ) : (
           <>
             <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
-              {isMosaicMode ? <TiledLayout /> : <TerminalPanel />}
+              <ErrorBoundary FallbackComponent={(props) => <ErrorFallback {...props} panelName="터미널" />}>
+                {isMosaicMode ? <TiledLayout /> : <TerminalPanel />}
+              </ErrorBoundary>
             </div>
             {/* Right Resize Handle */}
             <div
@@ -106,7 +112,9 @@ export function AppShell() {
               style={{ width: rightSidebarWidth, backgroundColor: 'var(--bg-secondary)' }}
               className="flex-shrink-0 flex flex-col"
             >
-              <RightSidebar />
+              <ErrorBoundary FallbackComponent={(props) => <ErrorFallback {...props} panelName="Git 패널" />}>
+                <RightSidebar />
+              </ErrorBoundary>
             </div>
           </>
         )}
