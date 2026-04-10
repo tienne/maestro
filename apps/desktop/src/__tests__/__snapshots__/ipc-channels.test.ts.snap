@@ -3,18 +3,26 @@
 exports[`IPC 채널 일관성 > 채널명 목록을 출력한다 (진단용) 1`] = `
 {
   "mainPushChannels": [
+    "env-reload-needed",
+    "hook-result",
+    "relay-status",
     "session-output",
     "session-status",
     "ui-focus",
     "ui-sidebar",
     "ui-tabs",
+    "window:number",
   ],
   "rendererListenChannels": [
+    "env-reload-needed",
+    "hook-result",
+    "relay-status",
     "session-output",
     "session-status",
     "ui-focus",
     "ui-sidebar",
     "ui-tabs",
+    "window:number",
   ],
 }
 `;

@@ -1,5 +1,11 @@
 @import "tailwindcss";
 
+/* M8-05: 내장 테마 */
+@import "./themes/catppuccin-mocha.css";
+@import "./themes/nord.css";
+@import "./themes/gruvbox-dark.css";
+@import "./themes/one-dark-pro.css";
+
 /* ── Font size levels ──────────────────────────────────────────────────────── */
 :root {
   --font-size-base: 14px; /* medium default */
