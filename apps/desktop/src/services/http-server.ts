@@ -13,6 +13,8 @@ import * as crypto from 'crypto';
 import { BrowserWindow } from 'electron';
 import { createExpressMiddleware } from '@trpc/server/adapters/express';
 import { appRouter } from '../trpc/router';
+import { getDatabaseManager } from '../db/database';
+import { getPtyManager } from './pty-manager';
 
 // ── Auth Token ────────────────────────────────────────────────────────────────
 
@@ -86,6 +88,75 @@ export async function startHttpServer(): Promise<number> {
 
     broadcastToRenderer('agent:event', { type, sessionId, agentType });
     res.json({ ok: true });
+  });
+
+  // ── 원격 제어 API ─────────────────────────────────────────────────────────────
+
+  /** GET /api/remote/sessions — 실행 중 세션 목록 */
+  app.get('/api/remote/sessions', authMiddleware, (_req: Request, res: Response) => {
+    try {
+      const db = getDatabaseManager().getDb();
+      const sessions = db
+        .prepare(`SELECT id, name, workspace_id, agent_id, status, pid, created_at FROM sessions ORDER BY created_at DESC`)
+        .all() as Array<{ id: string; name: string; workspace_id: string; agent_id: string; status: string; pid: number | null; created_at: string }>;
+      res.json({ sessions });
+    } catch (err) {
+      res.status(500).json({ error: String(err) });
+    }
+  });
+
+  /** POST /api/remote/sessions/:id/input — 세션에 텍스트 전송 */
+  app.post('/api/remote/sessions/:id/input', authMiddleware, (req: Request, res: Response) => {
+    const id = String(req.params['id']);
+    const { text } = req.body as { text?: string };
+    if (!text) {
+      res.status(400).json({ error: 'text is required' });
+      return;
+    }
+    try {
+      const ptyManager = getPtyManager();
+      ptyManager.write(id, text);
+      res.json({ ok: true });
+    } catch (err) {
+      res.status(500).json({ error: String(err) });
+    }
+  });
+
+  /** POST /api/remote/sessions/broadcast — 모든 실행 세션에 텍스트 브로드캐스트 */
+  app.post('/api/remote/sessions/broadcast', authMiddleware, (req: Request, res: Response) => {
+    const { text, sessionIds } = req.body as { text?: string; sessionIds?: string[] };
+    if (!text) {
+      res.status(400).json({ error: 'text is required' });
+      return;
+    }
+    try {
+      const db = getDatabaseManager().getDb();
+      const ptyManager = getPtyManager();
+
+      const targets: string[] = sessionIds ?? (() => {
+        const rows = db
+          .prepare(`SELECT id FROM sessions WHERE status = 'running'`)
+          .all() as Array<{ id: string }>;
+        return rows.map((r) => r.id);
+      })();
+
+      const errors: string[] = [];
+      for (const sid of targets) {
+        try {
+          ptyManager.write(sid, text);
+        } catch (e) {
+          errors.push(`${sid}: ${String(e)}`);
+        }
+      }
+      res.json({ ok: true, sent: targets.length - errors.length, errors });
+    } catch (err) {
+      res.status(500).json({ error: String(err) });
+    }
+  });
+
+  /** GET /api/remote/info — 서버 정보 (포트, 버전) */
+  app.get('/api/remote/info', authMiddleware, (_req: Request, res: Response) => {
+    res.json({ port: serverPort, version: '1.0.0', ready: true });
   });
 
   return new Promise((resolve, reject) => {
