@@ -50,6 +50,16 @@ function rowToSession(row: SessionRow) {
 export function registerSessionHandlers(db: DatabaseManager, ptyManager: PtyManager): void {
   const database = db.getDb();
 
+  // Fire-and-forget PTY 입력 — tRPC 왕복 없이 직접 PTY에 쓴다.
+  // 레이턴시 민감 경로이므로 ipcMain.on (응답 없음) 사용.
+  ipcMain.on('pty:write', (_event, args: { sessionId: string; text: string }) => {
+    try {
+      ptyManager.write(args.sessionId, args.text);
+    } catch {
+      // PTY가 이미 종료된 경우 조용히 무시
+    }
+  });
+
   ipcMain.handle('session:list', (_event, args: { workspaceId: string }) => {
     return database
       .prepare('SELECT * FROM sessions WHERE workspace_id = ? ORDER BY created_at DESC')

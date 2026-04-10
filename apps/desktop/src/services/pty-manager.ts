@@ -145,6 +145,11 @@ export class PtyManager {
   isAlive(sessionId: string): boolean {
     return this.sessions.has(sessionId);
   }
+
+  /** 현재 살아있는 세션 ID 목록 */
+  getActiveSessionIds(): string[] {
+    return Array.from(this.sessions.keys());
+  }
 }
 
 let instance: PtyManager | null = null;
