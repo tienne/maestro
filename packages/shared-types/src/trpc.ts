@@ -99,6 +99,11 @@ export const McpUpdateStatusSchema = z.object({
   errorMsg: z.string().nullable(),
 });
 
+export const OpenInIdeSchema = z.object({
+  workspaceId: z.string().uuid(),
+  ide: z.enum(['vscode', 'cursor', 'webstorm', 'zed']),
+});
+
 export const AppStateSchema = z.object({
   activeWorkspaceId: z.string().optional(),
   activeSessionId: z.string().optional(),
@@ -204,6 +209,12 @@ export const workspaceRouter = router({
     .mutation((): void => {
       throw new Error('Not implemented — use IPC handler');
     }),
+
+  openInIde: publicProcedure
+    .input(OpenInIdeSchema)
+    .mutation((): { success: boolean; message: string } => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
 });
 
 /**
@@ -275,6 +286,42 @@ export const sessionRouter = router({
   updateStatus: publicProcedure
     .input(z.object({ sessionId: z.string().uuid(), status: z.string() }))
     .mutation(() => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
+
+  getPorts: publicProcedure
+    .input(z.object({ sessionId: z.string() }))
+    .query((): number[] => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
+
+  openPort: publicProcedure
+    .input(z.object({ port: z.number().int().min(1).max(65535) }))
+    .mutation(() => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
+
+  getScrollback: publicProcedure
+    .input(z.object({ sessionId: z.string() }))
+    .query((): string => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
+
+  broadcast: publicProcedure
+    .input(z.object({ sessionIds: z.array(z.string()).min(1), text: z.string().min(1) }))
+    .mutation(() => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
+
+  savePrompt: publicProcedure
+    .input(z.object({ sessionId: z.string(), text: z.string().min(1) }))
+    .mutation(() => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
+
+  getPromptHistory: publicProcedure
+    .input(z.object({ sessionId: z.string(), limit: z.number().int().positive().max(100).optional() }))
+    .query((): Array<{ id: string; text: string; created_at: string }> => {
       throw new Error('Not implemented — use IPC handler');
     }),
 });
@@ -508,6 +555,16 @@ export const gitRouter = router({
   readDir: publicProcedure
     .input(z.object({ dirPath: z.string().min(1) }))
     .query(() => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
+
+  // ── Merge ────────────────────────────────────────────────────────────────
+  merge: publicProcedure
+    .input(z.object({
+      workspaceId: z.string().uuid(),
+      strategy: z.enum(['squash', 'rebase', 'merge']),
+    }))
+    .mutation((): { success: boolean; message: string } => {
       throw new Error('Not implemented — use IPC handler');
     }),
 });

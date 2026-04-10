@@ -78,6 +78,16 @@ export interface AppState {
   rightSidebarWidth: number;
 }
 
+// IDE deep-linking types
+export type IdeType = 'vscode' | 'cursor' | 'webstorm' | 'zed';
+
+export const IDE_LABELS: Record<IdeType, string> = {
+  vscode: 'VS Code',
+  cursor: 'Cursor',
+  webstorm: 'WebStorm',
+  zed: 'Zed',
+};
+
 // tRPC router types and Zod schemas
 export * from './trpc';
 
