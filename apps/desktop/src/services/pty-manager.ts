@@ -9,10 +9,15 @@ export interface PtySession {
 export type PtyOutputHandler = (sessionId: string, data: string) => void;
 export type PtyExitHandler = (sessionId: string, exitCode: number | undefined) => void;
 
+// 세션당 최대 스크롤백 버퍼 크기 (200 KB)
+const MAX_SCROLLBACK_BYTES = 200 * 1024;
+
 export class PtyManager {
   private sessions = new Map<string, pty.IPty>();
   private outputHandlers = new Map<string, PtyOutputHandler>();
   private exitHandlers = new Map<string, PtyExitHandler>();
+  /** 세션별 순환 스크롤백 버퍼 — PTY exit 시 DB에 저장하기 위해 유지 */
+  private scrollbacks = new Map<string, string>();
 
   onOutput(sessionId: string, handler: PtyOutputHandler): void {
     this.outputHandlers.set(sessionId, handler);
@@ -58,6 +63,15 @@ export class PtyManager {
     });
 
     ptyProcess.onData((data) => {
+      // 스크롤백 버퍼에 누적 (초과 시 앞부분 잘라냄)
+      const current = (this.scrollbacks.get(sessionId) ?? '') + data;
+      this.scrollbacks.set(
+        sessionId,
+        current.length > MAX_SCROLLBACK_BYTES
+          ? current.slice(current.length - MAX_SCROLLBACK_BYTES)
+          : current
+      );
+
       const h = this.outputHandlers.get(sessionId);
       if (h) h(sessionId, data);
     });
@@ -101,6 +115,21 @@ export class PtyManager {
     }
     this.sessions.delete(sessionId);
     log.info(`PTY session ${sessionId} killed`);
+  }
+
+  /** 세션 스크롤백 버퍼 반환 (최대 200KB) */
+  getScrollback(sessionId: string): string {
+    return this.scrollbacks.get(sessionId) ?? '';
+  }
+
+  /** 스크롤백 버퍼를 외부에서 주입 (DB 복원용) */
+  setScrollback(sessionId: string, data: string): void {
+    this.scrollbacks.set(sessionId, data);
+  }
+
+  /** 스크롤백 버퍼 제거 */
+  clearScrollback(sessionId: string): void {
+    this.scrollbacks.delete(sessionId);
   }
 
   killAll(): void {

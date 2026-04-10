@@ -81,6 +81,20 @@ export class DatabaseManager {
         value TEXT NOT NULL
       );
 
+      CREATE TABLE IF NOT EXISTS session_scrollbacks (
+        session_id  TEXT PRIMARY KEY,
+        data        TEXT NOT NULL DEFAULT '',
+        updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
+      CREATE TABLE IF NOT EXISTS prompt_history (
+        id          TEXT PRIMARY KEY,
+        session_id  TEXT NOT NULL,
+        text        TEXT NOT NULL,
+        created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_prompt_history_session ON prompt_history(session_id, created_at DESC);
+
       CREATE TABLE IF NOT EXISTS tiled_layouts (
         id           TEXT PRIMARY KEY,
         workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
