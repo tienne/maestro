@@ -10,9 +10,10 @@ import { AgentSettingsModal } from '../modals/AgentSettingsModal';
 import { SettingsModal } from '../modals/SettingsModal';
 import { MCPServersModal } from '../modals/MCPServersModal';
 import { GitPanel } from '../git-panel/GitPanel';
+import { AgentDashboard } from '../dashboard/AgentDashboard';
 import type { Workspace, IdeType } from '@maestro/shared-types';
 
-type LeftTab = 'repos' | 'git';
+type LeftTab = 'repos' | 'git' | 'dashboard';
 
 const IDE_OPTIONS: { id: IdeType; label: string; shortLabel: string }[] = [
   { id: 'vscode', label: 'VS Code', shortLabel: 'VS' },
@@ -117,9 +118,9 @@ export function LeftSidebar() {
         )}
       </div>
 
-      {/* Tabs: Repos | Git */}
+      {/* Tabs: Repos | Dashboard | Git */}
       <div className="flex flex-shrink-0 border-b" style={{ borderColor: 'var(--border)' }}>
-        {(['repos', 'git'] as LeftTab[]).map((tab) => (
+        {([['repos', 'Repos'], ['dashboard', 'Agents'], ['git', 'Git']] as [LeftTab, string][]).map(([tab, label]) => (
           <button
             key={tab}
             onClick={() => setLeftTab(tab)}
@@ -129,10 +130,17 @@ export function LeftSidebar() {
               borderBottom: leftTab === tab ? '2px solid var(--accent)' : '2px solid transparent',
             }}
           >
-            {tab === 'repos' ? 'Repos' : 'Git'}
+            {label}
           </button>
         ))}
       </div>
+
+      {/* Agent Dashboard tab */}
+      {leftTab === 'dashboard' && (
+        <div className="flex-1 overflow-hidden min-h-0">
+          <AgentDashboard />
+        </div>
+      )}
 
       {/* Git tab content */}
       {leftTab === 'git' && (
