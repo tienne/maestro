@@ -47,6 +47,13 @@ export function useAppHotkeys(onOpenCommandPalette: () => void) {
       useUiStore.getState().setRightPanelTab('git');
     });
 
+    // ⌘Shift+N — 새 윈도우
+    hotkeys('command+shift+n,ctrl+shift+n', (e) => {
+      prevent(e);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (window as any).electron?.ipcRenderer?.send('window:new');
+    });
+
     // ⌘1~9 — 세션 전환
     const sessionKeys = '1,2,3,4,5,6,7,8,9';
     hotkeys(`command+${sessionKeys},ctrl+${sessionKeys}`.replace(/,/g, ',command+').replace(/^/, ''), (e, handler) => {
@@ -64,6 +71,7 @@ export function useAppHotkeys(onOpenCommandPalette: () => void) {
       hotkeys.unbind('command+\\,ctrl+\\');
       hotkeys.unbind('command+shift+\\,ctrl+shift+\\');
       hotkeys.unbind('command+g,ctrl+g');
+      hotkeys.unbind('command+shift+n,ctrl+shift+n');
     };
   }, [onOpenCommandPalette]);
 

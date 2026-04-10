@@ -6,6 +6,7 @@ import { startHttpServer, stopHttpServer, getAuthToken } from '../services/http-
 import { saveServerConfig, clearServerConfig } from '../services/config-store';
 import { setupAutoUpdater } from './auto-updater';
 import { setupDeepLink } from './deep-link';
+import { setupWindowManager } from './window-manager';
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -72,6 +73,7 @@ app.whenReady().then(async () => {
   createWindow();
   setupAutoUpdater();
   setupDeepLink();
+  setupWindowManager();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
