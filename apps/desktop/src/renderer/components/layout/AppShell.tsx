@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react';
 import { useAppInit, useAutoSaveState, useAutoSaveLayout } from '../../hooks/useAppInit';
 import { useAppHotkeys } from '../../hooks/useAppHotkeys';
+import { useDeepLink } from '../../hooks/useDeepLink';
 import { LeftSidebar } from '../sidebar/LeftSidebar';
 import { TerminalPanel } from '../terminal/TerminalPanel';
 import { TiledLayout } from './TiledLayout';
@@ -27,6 +28,7 @@ export function AppShell() {
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
   const openCommandPalette = useCallback(() => setCommandPaletteOpen(true), []);
   useAppHotkeys(openCommandPalette);
+  useDeepLink();
 
   const { theme } = useTheme();
 
