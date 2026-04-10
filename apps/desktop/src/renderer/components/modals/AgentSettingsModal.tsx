@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useAgentStore } from '../../store/agentStore';
 import { trpc } from '../../lib/trpc';
+import { AgentIcon } from '../shared/AgentIcon';
 import type { Agent } from '@maestro/shared-types';
 
 interface Props {
@@ -151,7 +152,7 @@ export function AgentSettingsModal({ onClose }: Props) {
               <button
                 key={agent.id}
                 onClick={() => handleSelect(agent)}
-                className="w-full flex flex-col px-3 py-2 text-left text-xs border-b transition-colors"
+                className="w-full flex items-center gap-2 px-3 py-2 text-left text-xs border-b transition-colors"
                 style={{
                   borderColor: 'var(--border)',
                   backgroundColor: selectedId === agent.id ? 'var(--bg-hover)' : 'transparent',
@@ -164,10 +165,13 @@ export function AgentSettingsModal({ onClose }: Props) {
                   if (selectedId !== agent.id) e.currentTarget.style.backgroundColor = 'transparent';
                 }}
               >
-                <span className="truncate">{agent.name}</span>
-                {agent.isBuiltIn && (
-                  <span className="text-[9px]" style={{ color: 'var(--text-muted)' }}>built-in</span>
-                )}
+                <AgentIcon agent={agent} size="sm" />
+                <div className="flex flex-col min-w-0">
+                  <span className="truncate">{agent.name}</span>
+                  {agent.isBuiltIn && (
+                    <span className="text-[9px]" style={{ color: 'var(--text-muted)' }}>built-in</span>
+                  )}
+                </div>
               </button>
             ))}
           </div>

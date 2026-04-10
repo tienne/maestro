@@ -3,6 +3,7 @@ import { useAgentStore } from '../../store/agentStore';
 import { useSessionStore } from '../../store/sessionStore';
 import { useUiStore } from '../../store/uiStore';
 import { trpc } from '../../lib/trpc';
+import { AgentIcon } from '../shared/AgentIcon';
 import type { Workspace, Session } from '@maestro/shared-types';
 
 interface Props {
@@ -88,33 +89,39 @@ export function CreateSessionModal({ workspace, onClose }: Props) {
         <div className="flex flex-col gap-2">
           <label className="text-xs" style={{ color: 'var(--text-muted)' }}>Agent</label>
           <div className="grid grid-cols-2 gap-2">
-            {agents.map((agent) => (
-              <button
-                key={agent.id}
-                onClick={() => setSelectedAgentId(agent.id)}
-                className="flex flex-col gap-0.5 px-3 py-2 rounded border text-left transition-colors"
-                style={{
-                  borderColor: selectedAgentId === agent.id ? 'var(--accent)' : 'var(--border)',
-                  backgroundColor: selectedAgentId === agent.id ? 'var(--bg-active)' : 'transparent',
-                  color: selectedAgentId === agent.id ? 'var(--text-primary)' : 'var(--text-secondary)',
-                }}
-                onMouseEnter={(e) => {
-                  if (selectedAgentId !== agent.id) {
-                    e.currentTarget.style.borderColor = 'var(--text-muted)';
-                    e.currentTarget.style.color = 'var(--text-primary)';
-                  }
-                }}
-                onMouseLeave={(e) => {
-                  if (selectedAgentId !== agent.id) {
-                    e.currentTarget.style.borderColor = 'var(--border)';
-                    e.currentTarget.style.color = 'var(--text-secondary)';
-                  }
-                }}
-              >
-                <span className="text-xs font-medium">{agent.name}</span>
-                <span className="text-[10px] font-mono" style={{ color: 'var(--text-muted)' }}>{agent.command}</span>
-              </button>
-            ))}
+            {agents.map((agent) => {
+              const isSelected = selectedAgentId === agent.id;
+              return (
+                <button
+                  key={agent.id}
+                  onClick={() => setSelectedAgentId(agent.id)}
+                  className="flex flex-col items-center gap-2 px-3 py-3 rounded border text-center transition-colors"
+                  style={{
+                    borderColor: isSelected ? 'var(--accent)' : 'var(--border)',
+                    backgroundColor: isSelected ? 'var(--bg-active)' : 'transparent',
+                    color: isSelected ? 'var(--text-primary)' : 'var(--text-secondary)',
+                  }}
+                  onMouseEnter={(e) => {
+                    if (!isSelected) {
+                      e.currentTarget.style.borderColor = 'var(--text-muted)';
+                      e.currentTarget.style.color = 'var(--text-primary)';
+                    }
+                  }}
+                  onMouseLeave={(e) => {
+                    if (!isSelected) {
+                      e.currentTarget.style.borderColor = 'var(--border)';
+                      e.currentTarget.style.color = 'var(--text-secondary)';
+                    }
+                  }}
+                >
+                  <AgentIcon agent={agent} size="lg" />
+                  <div className="flex flex-col gap-0.5">
+                    <span className="text-xs font-medium leading-tight">{agent.name}</span>
+                    <span className="text-[10px] font-mono" style={{ color: 'var(--text-muted)' }}>{agent.command}</span>
+                  </div>
+                </button>
+              );
+            })}
           </div>
         </div>
 
