@@ -7,6 +7,7 @@ import { TiledLayout } from './TiledLayout';
 import { RightSidebar } from '../git-panel/RightSidebar';
 import { RepoSettingsPage } from '../repo-settings/RepoSettingsPage';
 import { SessionResumeModal } from '../modals/SessionResumeModal';
+import { CommandPalette } from '../modals/CommandPalette';
 import { useUiStore } from '../../store/uiStore';
 import { useLayoutStore } from '../../store/layoutStore';
 import { Toaster } from 'sonner';
@@ -126,6 +127,11 @@ export function AppShell() {
         )}
         </div>
       </div>
+
+      <CommandPalette
+        open={commandPaletteOpen}
+        onClose={() => setCommandPaletteOpen(false)}
+      />
 
       {pendingResumeSession && (
         <SessionResumeModal
