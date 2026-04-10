@@ -5,6 +5,7 @@ import { createAgentCommand } from './commands/agent';
 import { createSessionCommand } from './commands/session';
 import { createPanesCommand } from './commands/panes';
 import { createUiCommand } from './commands/ui';
+import { createBroadcastCommand } from './commands/broadcast';
 
 const program = new Command()
   .name('maestro')
@@ -16,6 +17,7 @@ program
   .addCommand(createAgentCommand())
   .addCommand(createSessionCommand())
   .addCommand(createPanesCommand())
-  .addCommand(createUiCommand());
+  .addCommand(createUiCommand())
+  .addCommand(createBroadcastCommand());
 
 program.parse();

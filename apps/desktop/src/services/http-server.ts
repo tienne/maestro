@@ -15,6 +15,9 @@ import { createExpressMiddleware } from '@trpc/server/adapters/express';
 import { appRouter } from '../trpc/router';
 import { getDatabaseManager } from '../db/database';
 import { getPtyManager } from './pty-manager';
+import * as fs from 'fs';
+import * as path from 'path';
+import * as os from 'os';
 
 // ── Auth Token ────────────────────────────────────────────────────────────────
 
@@ -159,6 +162,158 @@ export async function startHttpServer(): Promise<number> {
     res.json({ port: serverPort, version: '1.0.0', ready: true });
   });
 
+  // ── M6-03: 확장 REST API 엔드포인트 ─────────────────────────────────────────
+
+  /** POST /api/remote/sessions — 새 세션 생성 */
+  app.post('/api/remote/sessions', authMiddleware, (req: Request, res: Response) => {
+    try {
+      const db = getDatabaseManager().getDb();
+      const { name, workspaceId, agentId } = req.body as {
+        name?: string;
+        workspaceId?: string;
+        agentId?: string;
+      };
+
+      if (!name || !workspaceId || !agentId) {
+        res.status(400).json({ error: 'name, workspaceId, agentId are required' });
+        return;
+      }
+
+      const workspace = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(workspaceId);
+      if (!workspace) {
+        res.status(404).json({ error: `Workspace ${workspaceId} not found` });
+        return;
+      }
+
+      const agent = db.prepare('SELECT * FROM agents WHERE id = ?').get(agentId);
+      if (!agent) {
+        res.status(404).json({ error: `Agent ${agentId} not found` });
+        return;
+      }
+
+      const id = crypto.randomUUID();
+      db.prepare(
+        `INSERT INTO sessions (id, name, workspace_id, agent_id, status) VALUES (?, ?, ?, ?, 'pending')`
+      ).run(id, name, workspaceId, agentId);
+
+      const row = db.prepare(
+        'SELECT id, name, workspace_id, agent_id, status, pid, created_at FROM sessions WHERE id = ?'
+      ).get(id) as Record<string, unknown>;
+
+      res.status(201).json({ session: row });
+    } catch (err) {
+      res.status(500).json({ error: String(err) });
+    }
+  });
+
+  /** GET /api/remote/sessions/:id — 세션 상태 조회 */
+  app.get('/api/remote/sessions/:id', authMiddleware, (req: Request, res: Response) => {
+    try {
+      const db = getDatabaseManager().getDb();
+      const row = db.prepare(
+        'SELECT id, name, workspace_id, agent_id, status, pid, created_at FROM sessions WHERE id = ?'
+      ).get(String(req.params['id'])) as Record<string, unknown> | undefined;
+
+      if (!row) {
+        res.status(404).json({ error: 'Session not found' });
+        return;
+      }
+      res.json({ session: row });
+    } catch (err) {
+      res.status(500).json({ error: String(err) });
+    }
+  });
+
+  /** DELETE /api/remote/sessions/:id — 세션 종료 */
+  app.delete('/api/remote/sessions/:id', authMiddleware, (req: Request, res: Response) => {
+    try {
+      const db = getDatabaseManager().getDb();
+      const ptyManager = getPtyManager();
+      const sessionId = String(req.params['id']);
+
+      const row = db.prepare('SELECT id FROM sessions WHERE id = ?').get(sessionId);
+      if (!row) {
+        res.status(404).json({ error: 'Session not found' });
+        return;
+      }
+
+      if (ptyManager.isAlive(sessionId)) {
+        ptyManager.kill(sessionId);
+      }
+      db.prepare('UPDATE sessions SET status = ?, pid = NULL WHERE id = ?').run('stopped', sessionId);
+      res.json({ ok: true });
+    } catch (err) {
+      res.status(500).json({ error: String(err) });
+    }
+  });
+
+  /** GET /api/docs — Swagger UI (간소화된 정적 HTML) */
+  app.get('/api/docs', (_req: Request, res: Response) => {
+    const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Maestro API Documentation</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 900px; margin: 0 auto; padding: 2rem; background: #1a1a2e; color: #e0e0e0; }
+    h1 { color: #6366f1; border-bottom: 2px solid #6366f1; padding-bottom: 0.5rem; }
+    h2 { color: #818cf8; margin-top: 2rem; }
+    .endpoint { background: #16213e; padding: 1rem; border-radius: 8px; margin: 0.5rem 0; border-left: 3px solid #6366f1; }
+    .method { font-weight: bold; padding: 2px 8px; border-radius: 4px; font-size: 0.85em; }
+    .get { background: #22c55e; color: #000; }
+    .post { background: #3b82f6; color: #fff; }
+    .delete { background: #ef4444; color: #fff; }
+    code { background: #0f3460; padding: 2px 6px; border-radius: 4px; font-size: 0.9em; }
+    pre { background: #0f3460; padding: 1rem; border-radius: 8px; overflow-x: auto; }
+    .note { color: #a0a0a0; font-size: 0.9em; }
+  </style>
+</head>
+<body>
+  <h1>Maestro REST API</h1>
+  <p class="note">Base URL: <code>http://127.0.0.1:${serverPort}</code> | Auth: <code>Authorization: Bearer &lt;token&gt;</code></p>
+
+  <h2>Sessions</h2>
+  <div class="endpoint"><span class="method get">GET</span> <code>/api/remote/sessions</code> — 세션 목록</div>
+  <div class="endpoint"><span class="method post">POST</span> <code>/api/remote/sessions</code> — 새 세션 생성<br><code>body: { name, workspaceId, agentId }</code></div>
+  <div class="endpoint"><span class="method get">GET</span> <code>/api/remote/sessions/:id</code> — 세션 상태 조회</div>
+  <div class="endpoint"><span class="method delete">DELETE</span> <code>/api/remote/sessions/:id</code> — 세션 종료</div>
+  <div class="endpoint"><span class="method post">POST</span> <code>/api/remote/sessions/:id/input</code> — 텍스트 전송<br><code>body: { text }</code></div>
+  <div class="endpoint"><span class="method post">POST</span> <code>/api/remote/sessions/broadcast</code> — 브로드캐스트<br><code>body: { text, sessionIds? }</code></div>
+
+  <h2>System</h2>
+  <div class="endpoint"><span class="method get">GET</span> <code>/api/remote/info</code> — 서버 정보</div>
+  <div class="endpoint"><span class="method post">POST</span> <code>/api/events</code> — 에이전트 이벤트 수신</div>
+
+  <h2>tRPC</h2>
+  <div class="endpoint"><span class="method post">POST</span> <code>/trpc/*</code> — 전체 tRPC procedure (batch 지원)</div>
+
+  <h2>curl 예시</h2>
+  <pre>
+# 세션 목록 조회
+curl -H "Authorization: Bearer &lt;token&gt;" http://127.0.0.1:${serverPort}/api/remote/sessions
+
+# 새 세션 생성
+curl -X POST -H "Authorization: Bearer &lt;token&gt;" -H "Content-Type: application/json" \\
+  -d '{"name":"test","workspaceId":"...","agentId":"..."}' \\
+  http://127.0.0.1:${serverPort}/api/remote/sessions
+
+# 세션에 텍스트 전송
+curl -X POST -H "Authorization: Bearer &lt;token&gt;" -H "Content-Type: application/json" \\
+  -d '{"text":"hello"}' \\
+  http://127.0.0.1:${serverPort}/api/remote/sessions/&lt;id&gt;/input
+
+# 브로드캐스트
+curl -X POST -H "Authorization: Bearer &lt;token&gt;" -H "Content-Type: application/json" \\
+  -d '{"text":"please commit your changes"}' \\
+  http://127.0.0.1:${serverPort}/api/remote/sessions/broadcast
+  </pre>
+</body>
+</html>`;
+    res.type('html').send(html);
+  });
+
+  // ── 포트 파일 저장 (CLI에서 사용) ──────────────────────────────────────────
+
   return new Promise((resolve, reject) => {
     server = app.listen(0, '127.0.0.1', () => {
       const address = server!.address();
@@ -167,6 +322,14 @@ export async function startHttpServer(): Promise<number> {
         return;
       }
       serverPort = address.port;
+
+      // ~/.maestro/port 파일에 포트 번호 저장 (CLI에서 직접 읽기용)
+      try {
+        const portDir = path.join(os.homedir(), '.maestro');
+        if (!fs.existsSync(portDir)) fs.mkdirSync(portDir, { recursive: true });
+        fs.writeFileSync(path.join(portDir, 'port'), String(serverPort));
+      } catch { /* 무시 */ }
+
       resolve(serverPort);
     });
 
@@ -186,6 +349,11 @@ export function stopHttpServer(): Promise<void> {
     server.close(() => {
       server = null;
       serverPort = 0;
+      // port 파일 정리
+      try {
+        const portFile = path.join(os.homedir(), '.maestro', 'port');
+        if (fs.existsSync(portFile)) fs.unlinkSync(portFile);
+      } catch { /* 무시 */ }
       resolve();
     });
   });

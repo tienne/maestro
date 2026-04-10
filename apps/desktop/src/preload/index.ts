@@ -8,8 +8,15 @@ exposeElectronTRPC();
 contextBridge.exposeInMainWorld('electron', electronAPI);
 
 contextBridge.exposeInMainWorld('electronAPI', {
+  /** M7-04: renderer 에러를 main process에 전달하여 파일 로그에 기록 */
+  reportError: (source: string, message: string, stack?: string) =>
+    ipcRenderer.send('renderer-error', { source, message, stack }),
+
   invoke: (channel: string, args?: Record<string, unknown>) =>
     ipcRenderer.invoke(channel, args),
+
+  /** Fire-and-forget IPC — 응답을 기다리지 않음 (PTY 입력 등 레이턴시 민감 경로) */
+  send: (channel: string, args?: unknown) => ipcRenderer.send(channel, args),
 
   onEvent: (channel: string, handler: (payload: unknown) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, payload: unknown) =>
