@@ -4,11 +4,14 @@ import { trpc } from '../../lib/trpc';
 
 interface Props {
   sessionId: string | null;
+  /** 외부(TerminalPanel)에서 브로드캐스트 모드를 제어할 수 있는 prop */
+  broadcastModeExternal?: boolean;
 }
 
-export function PromptInput({ sessionId }: Props) {
+export function PromptInput({ sessionId, broadcastModeExternal }: Props) {
   const [text, setText] = useState('');
-  const [broadcastMode, setBroadcastMode] = useState(false);
+  const [broadcastModeLocal, setBroadcastMode] = useState(false);
+  const broadcastMode = broadcastModeExternal ?? broadcastModeLocal;
   /** 히스토리 탐색 인덱스 (null = 현재 입력 상태) */
   const [historyIdx, setHistoryIdx] = useState<number | null>(null);
   /** 히스토리 탐색 시작 전 원본 텍스트 보존 */
@@ -149,8 +152,8 @@ export function PromptInput({ sessionId }: Props) {
           rows={1}
         />
 
-        {/* 브로드캐스트 토글 */}
-        {runningSessions.length > 1 && (
+        {/* 브로드캐스트 토글 (외부 제어가 없을 때만 표시) */}
+        {broadcastModeExternal === undefined && runningSessions.length > 1 && (
           <button
             onClick={() => setBroadcastMode(!broadcastMode)}
             title={broadcastMode ? '브로드캐스트 모드 끄기' : '전체 세션에 브로드캐스트'}
