@@ -65,7 +65,7 @@ export function AddRepositoryModal({ onClose }: Props) {
   };
 
   return (
-    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50" onClick={onClose}>
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50" onClick={onClose} role="dialog" aria-modal="true" aria-label="레포지토리 추가">
       <div
         className="rounded-lg w-[440px] p-5 flex flex-col gap-4 border"
         style={{ backgroundColor: 'var(--bg-panel)', borderColor: 'var(--border)' }}

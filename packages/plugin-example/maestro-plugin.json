@@ -1,0 +1,5 @@
+{
+  "name": "hello-maestro",
+  "version": "1.0.0",
+  "entry": "dist/index.js"
+}

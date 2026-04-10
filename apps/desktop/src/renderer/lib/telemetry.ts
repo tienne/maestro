@@ -46,4 +46,19 @@ export const telemetry = {
     if (!API_KEY || !initialized) return;
     posthog.capture(event, properties);
   },
+
+  /** M10-04: 세션 생성 이벤트 */
+  trackSessionCreated(agentType: string, hasWorkspace: boolean): void {
+    this.capture('session_created', { agent_type: agentType, has_workspace: hasWorkspace });
+  },
+
+  /** M10-04: 기능 사용 이벤트 */
+  trackFeatureUsed(featureName: string): void {
+    this.capture('feature_used', { feature_name: featureName });
+  },
+
+  /** M10-04: 앱 시작 이벤트 */
+  trackAppStarted(version: string): void {
+    this.capture('app_started', { version });
+  },
 };

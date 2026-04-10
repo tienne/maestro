@@ -1,22 +1,23 @@
 /**
- * Maestro toast helper — sonner 기반 타입-안전 토스트 래퍼
- * 앱 전역에서 일관된 토스트 스타일 유지.
+ * Maestro notify helper — OS 알림(Web Notifications API) 기반
+ * Electron 렌더러는 권한 요청 없이 알림 사용 가능.
+ * soundEnabled 설정에 따라 silent 옵션 자동 적용.
  */
-import { toast as sonnerToast } from 'sonner';
+import { useSettingsStore } from '../store/settingsStore';
+
+function osNotify(title: string, body?: string): void {
+  const { soundEnabled } = useSettingsStore.getState();
+  new window.Notification(title, {
+    body,
+    silent: !soundEnabled,
+  });
+}
 
 export const toast = {
-  success: (msg: string, description?: string) =>
-    sonnerToast.success(msg, { description }),
-
-  error: (msg: string, description?: string) =>
-    sonnerToast.error(msg, { description }),
-
-  info: (msg: string, description?: string) =>
-    sonnerToast.info(msg, { description }),
-
-  loading: (msg: string) =>
-    sonnerToast.loading(msg),
-
-  dismiss: (id?: string | number) =>
-    sonnerToast.dismiss(id),
+  success: (msg: string, description?: string) => osNotify(msg, description),
+  error: (msg: string, description?: string) => osNotify(msg, description),
+  info: (msg: string, description?: string) => osNotify(msg, description),
+  // OS 알림은 loading 상태를 지원하지 않음 — no-op
+  loading: (_msg: string) => undefined,
+  dismiss: (_id?: string | number) => undefined,
 };

@@ -1,4 +1,5 @@
 import { useTheme } from '../ThemeProvider';
+import { useSettingsStore } from '../../store/settingsStore';
 
 interface Props {
   onClose: () => void;
@@ -6,6 +7,7 @@ interface Props {
 
 export function SettingsModal({ onClose }: Props) {
   const { theme, fontSize, setTheme, setFontSize } = useTheme();
+  const { soundEnabled, telemetryEnabled, setSoundEnabled, setTelemetryEnabled } = useSettingsStore();
 
   return (
     <div
@@ -93,6 +95,27 @@ export function SettingsModal({ onClose }: Props) {
           </div>
         </section>
 
+        {/* Notification Section */}
+        <section className="flex flex-col gap-3">
+          <h3 className="text-sm font-medium" style={{ color: 'var(--text-secondary)' }}>
+            알림
+          </h3>
+          <div className="flex flex-col gap-2">
+            <ToggleRow
+              label="알림음"
+              desc="세션 완료/오류 시 소리 재생"
+              checked={soundEnabled}
+              onChange={setSoundEnabled}
+            />
+            <ToggleRow
+              label="사용 데이터 수집"
+              desc="익명 통계만 수집, PII 없음 (옵트인)"
+              checked={telemetryEnabled}
+              onChange={setTelemetryEnabled}
+            />
+          </div>
+        </section>
+
         {/* Font Size Section */}
         <section className="flex flex-col gap-3">
           <h3 className="text-sm font-medium" style={{ color: 'var(--text-secondary)' }}>
@@ -127,6 +150,44 @@ export function SettingsModal({ onClose }: Props) {
           </div>
         </section>
       </div>
+    </div>
+  );
+}
+
+interface ToggleRowProps {
+  label: string;
+  desc: string;
+  checked: boolean;
+  onChange: (v: boolean) => void;
+}
+
+function ToggleRow({ label, desc, checked, onChange }: ToggleRowProps) {
+  return (
+    <div
+      className="flex items-center justify-between p-3 rounded-lg"
+      style={{ backgroundColor: 'var(--bg-secondary)', border: '1px solid var(--border)' }}
+    >
+      <div className="flex flex-col">
+        <span className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>
+          {label}
+        </span>
+        <span className="text-xs" style={{ color: 'var(--text-secondary)' }}>
+          {desc}
+        </span>
+      </div>
+      <button
+        role="switch"
+        aria-checked={checked}
+        onClick={() => onChange(!checked)}
+        className="relative inline-flex h-6 w-11 flex-shrink-0 items-center rounded-full transition-colors duration-200 focus:outline-none"
+        style={{ backgroundColor: checked ? 'var(--accent)' : 'var(--bg-tertiary, #3a3a3a)' }}
+      >
+        <span
+          className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform duration-200 ${
+            checked ? 'translate-x-6' : 'translate-x-1'
+          }`}
+        />
+      </button>
     </div>
   );
 }

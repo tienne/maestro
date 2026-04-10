@@ -11,7 +11,7 @@ interface Props {
 
 export function SessionResumeModal({ session, onClose }: Props) {
   const { updateSession, setActiveSession } = useSessionStore();
-  const { setPaneSession, setCurrentView, setPendingResumeSession } = useUiStore();
+  const { setPaneSession, setCurrentView } = useUiStore();
   const [error, setError] = useState('');
 
   const resumeMutation = trpc.session.resume.useMutation({
@@ -21,14 +21,12 @@ export function SessionResumeModal({ session, onClose }: Props) {
       setActiveSession(sess.id);
       setPaneSession(0, sess.id);
       setCurrentView('terminal');
-      setPendingResumeSession(null);
       onClose();
     },
     onError: (e) => setError(e.message),
   });
 
   const handleDismiss = () => {
-    setPendingResumeSession(null);
     onClose();
   };
 

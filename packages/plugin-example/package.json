@@ -1,0 +1,8 @@
+{
+  "name": "@maestro/plugin-example",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Hello Maestro - Official example plugin",
+  "main": "dist/index.js",
+  "files": ["dist", "maestro-plugin.json"]
+}
