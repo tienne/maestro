@@ -13,6 +13,9 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { trpc } from '../../lib/trpc';
+import { StashPanel } from './StashPanel';
+import { TagPanel } from './TagPanel';
+import { SquashPanel } from './SquashPanel';
 import type { Workspace } from '@maestro/shared-types';
 
 interface Props {
@@ -28,19 +31,22 @@ interface DiffHunk {
   lines: { type: 'add' | 'added' | 'remove' | 'removed' | 'context'; content: string }[];
 }
 
-// ── BranchSelector ────────────────────────────────────────────────────────────
+// ── BranchSelector (F-M1-03: ahead/behind 카운터 추가) ─────────────────────
 
 function BranchSelector({ repoPath }: { repoPath: string }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
   const branchQuery = trpc.git.branches.useQuery({ repoPath }, { staleTime: 10_000 });
+  const branchStatusQuery = trpc.git.getBranchStatus.useQuery({ repoPath }, { staleTime: 15_000 });
   const checkoutMutation = trpc.git.checkout.useMutation({
-    onSuccess: () => { setOpen(false); branchQuery.refetch(); },
+    onSuccess: () => { setOpen(false); branchQuery.refetch(); branchStatusQuery.refetch(); },
   });
 
-  const current = branchQuery.data?.current ?? '…';
+  const current = branchQuery.data?.current ?? '...';
   const branches = branchQuery.data?.branches ?? [];
+  const ahead = branchStatusQuery.data?.ahead ?? 0;
+  const behind = branchStatusQuery.data?.behind ?? 0;
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -67,6 +73,14 @@ function BranchSelector({ repoPath }: { repoPath: string }) {
         <span className="truncate flex-1 text-left font-mono" style={{ color: 'var(--text-primary)' }}>
           {current}
         </span>
+        {/* F-M1-03: ahead/behind counter */}
+        {(ahead > 0 || behind > 0) && (
+          <span className="flex-shrink-0 text-[10px] font-mono" style={{ color: 'var(--text-muted)' }}>
+            {ahead > 0 && <span style={{ color: '#4ade80' }}>↑{ahead}</span>}
+            {ahead > 0 && behind > 0 && ' '}
+            {behind > 0 && <span style={{ color: '#f87171' }}>↓{behind}</span>}
+          </span>
+        )}
         <span style={{ opacity: 0.5 }}>▾</span>
       </button>
 
@@ -288,6 +302,16 @@ export function GitPanel({ workspace }: Props) {
     onSuccess: () => { setActionResult({ ok: true, text: 'Pulled!' }); statusQuery.refetch(); },
     onError: (e) => setActionResult({ ok: false, text: e.message }),
   });
+  // F-M1-03: Fetch
+  const fetchMutation = trpc.git.fetch.useMutation({
+    onSuccess: () => setActionResult({ ok: true, text: 'Fetched all remotes' }),
+    onError: (e) => setActionResult({ ok: false, text: e.message }),
+  });
+  // F-M1-04: Discard All
+  const discardAllMutation = trpc.git.discardAll.useMutation({
+    onSuccess: () => { setActionResult({ ok: true, text: 'All changes discarded' }); statusQuery.refetch(); },
+    onError: (e) => setActionResult({ ok: false, text: e.message }),
+  });
 
   const status = statusQuery.data;
 
@@ -323,7 +347,7 @@ export function GitPanel({ workspace }: Props) {
     commitMutation.mutate({ repoPath, message: commitMessage.trim() });
   };
 
-  const isActing = commitMutation.isPending || pushMutation.isPending || pullMutation.isPending;
+  const isActing = commitMutation.isPending || pushMutation.isPending || pullMutation.isPending || fetchMutation.isPending || discardAllMutation.isPending;
 
   // auto-dismiss result after 4s
   useEffect(() => {
@@ -339,8 +363,23 @@ export function GitPanel({ workspace }: Props) {
         <BranchSelector repoPath={repoPath} />
       </div>
 
-      {/* Push/Pull actions */}
+      {/* Push/Pull/Fetch actions */}
       <div className="px-2 pb-2 flex gap-1.5 flex-shrink-0">
+        <button
+          onClick={() => { setActionResult(null); fetchMutation.mutate({ repoPath }); }}
+          disabled={isActing}
+          className="py-1 rounded text-[11px] transition-colors px-2"
+          style={{
+            backgroundColor: isActing ? 'var(--bg-hover)' : 'var(--bg-secondary)',
+            color: isActing ? 'var(--text-muted)' : 'var(--text-secondary)',
+            border: '1px solid var(--border)',
+          }}
+          onMouseEnter={(e) => { if (!isActing) e.currentTarget.style.borderColor = 'var(--accent)'; }}
+          onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--border)'; }}
+          title="Fetch all remotes"
+        >
+          {fetchMutation.isPending ? '...' : '⟳ Fetch'}
+        </button>
         <button
           onClick={() => { setActionResult(null); pullMutation.mutate({ repoPath }); }}
           disabled={isActing}
@@ -353,7 +392,7 @@ export function GitPanel({ workspace }: Props) {
           onMouseEnter={(e) => { if (!isActing) e.currentTarget.style.borderColor = 'var(--accent)'; }}
           onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--border)'; }}
         >
-          {pullMutation.isPending ? '…' : '↓ Pull'}
+          {pullMutation.isPending ? '...' : '↓ Pull'}
         </button>
         <button
           onClick={() => { setActionResult(null); pushMutation.mutate({ repoPath }); }}
@@ -367,7 +406,7 @@ export function GitPanel({ workspace }: Props) {
           onMouseEnter={(e) => { if (!isActing) e.currentTarget.style.borderColor = 'var(--accent)'; }}
           onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--border)'; }}
         >
-          {pushMutation.isPending ? '…' : '↑ Push'}
+          {pushMutation.isPending ? '...' : '↑ Push'}
         </button>
       </div>
 
@@ -413,6 +452,32 @@ export function GitPanel({ workspace }: Props) {
       {/* Divider */}
       <div className="h-px flex-shrink-0" style={{ backgroundColor: 'var(--border)' }} />
 
+      {/* F-M1-04: Discard All Changes */}
+      {files.length > 0 && (
+        <div className="flex-shrink-0 px-2 pt-1.5">
+          <button
+            onClick={() => {
+              if (window.confirm('Discard ALL uncommitted changes? This cannot be undone.')) {
+                setActionResult(null);
+                discardAllMutation.mutate({ repoPath });
+              }
+            }}
+            disabled={isActing}
+            className="w-full py-1 rounded text-[10px] transition-colors"
+            style={{
+              backgroundColor: 'rgba(239,68,68,0.1)',
+              color: '#f87171',
+              border: '1px solid rgba(239,68,68,0.2)',
+              opacity: isActing ? 0.5 : 1,
+            }}
+            onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'rgba(239,68,68,0.2)')}
+            onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'rgba(239,68,68,0.1)')}
+          >
+            {discardAllMutation.isPending ? 'Discarding...' : 'Discard All Changes'}
+          </button>
+        </div>
+      )}
+
       {/* Commit section */}
       <div className="flex-shrink-0 p-2 flex flex-col gap-1.5">
         <textarea
@@ -456,6 +521,15 @@ export function GitPanel({ workspace }: Props) {
           </div>
         )}
       </div>
+
+      {/* F-M1-02: Stash section */}
+      <StashPanel repoPath={repoPath} />
+
+      {/* F-M1-06: Tag section */}
+      <TagPanel repoPath={repoPath} />
+
+      {/* F-M1-08: Squash Rebase section */}
+      <SquashPanel repoPath={repoPath} />
 
       {/* suppress unused warning */}
       <div style={{ display: 'none' }}>{statusSub.status}</div>

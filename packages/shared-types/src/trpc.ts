@@ -10,7 +10,7 @@
 
 import { initTRPC } from '@trpc/server';
 import { z } from 'zod';
-import type { Workspace, Repository, Agent, Session } from './index';
+import type { Workspace, Repository, Agent, Session, SessionCostSummary, TaskItem, ErrorInfo, SessionIntelligence, AgentPreset, SessionLabel, WorkspaceTemplate, WorkspaceSnapshot, WorkspaceWithHooks, Webhook, WebhookLog, ApiKey, PluginInfo, ArchiveSearchResult, CustomTheme, SettingsProfile } from './index';
 
 // ── tRPC instance ─────────────────────────────────────────────────────────────
 
@@ -40,6 +40,8 @@ export const CreateSessionSchema = z.object({
   name: z.string().min(1),
   workspaceId: z.string().uuid(),
   agentId: z.string().uuid(),
+  dependsOnSessionId: z.string().nullable().optional(),
+  contextSourceSessionId: z.string().nullable().optional(),
 });
 
 export const LaunchSessionSchema = z.object({
@@ -53,6 +55,8 @@ export const CreateAgentSchema = z.object({
   command: z.string().min(1),
   args: z.array(z.string()),
   env: z.record(z.string(), z.string()),
+  scriptPath: z.string().nullable().optional(),
+  scriptContent: z.string().nullable().optional(),
 });
 
 export const UpdateAgentSchema = z.object({
@@ -61,6 +65,8 @@ export const UpdateAgentSchema = z.object({
   command: z.string().min(1),
   args: z.array(z.string()),
   env: z.record(z.string(), z.string()),
+  scriptPath: z.string().nullable().optional(),
+  scriptContent: z.string().nullable().optional(),
 });
 
 export const AddRepositorySchema = z.object({
@@ -215,6 +221,90 @@ export const workspaceRouter = router({
     .mutation((): { success: boolean; message: string } => {
       throw new Error('Not implemented — use IPC handler');
     }),
+
+  // ── M5-02: Snapshot ───────────────────────────────────────────────────
+  createSnapshot: publicProcedure
+    .input(z.object({ workspaceId: z.string() }))
+    .mutation((): WorkspaceSnapshot => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
+
+  listSnapshots: publicProcedure
+    .input(z.object({ workspaceId: z.string() }))
+    .query((): WorkspaceSnapshot[] => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
+
+  restoreSnapshot: publicProcedure
+    .input(z.object({ snapshotId: z.string() }))
+    .mutation((): { success: boolean } => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
+
+  // ── M5-03: Lifecycle Hooks ────────────────────────────────────────────
+  updateHooks: publicProcedure
+    .input(z.object({
+      workspaceId: z.string(),
+      hookOnSessionStart: z.string().optional(),
+      hookOnAgentComplete: z.string().optional(),
+      hookOnError: z.string().optional(),
+    }))
+    .mutation((): WorkspaceWithHooks => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
+
+  getHooks: publicProcedure
+    .input(z.object({ workspaceId: z.string() }))
+    .query((): { hookOnSessionStart: string; hookOnAgentComplete: string; hookOnError: string } => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
+
+  // ── M5-04: Env Sync ──────────────────────────────────────────────────
+  notifyEnvChange: publicProcedure
+    .input(z.object({ repositoryId: z.string() }))
+    .mutation((): { notified: number } => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
+
+  reloadEnv: publicProcedure
+    .input(z.object({ sessionId: z.string() }))
+    .mutation((): { success: boolean } => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
+});
+
+// ── M5-01: templateRouter ──────────────────────────────────────────────────
+
+export const templateRouter = router({
+  list: publicProcedure.query((): WorkspaceTemplate[] => {
+    throw new Error('Not implemented — use IPC handler');
+  }),
+
+  create: publicProcedure
+    .input(z.object({
+      name: z.string().min(1),
+      description: z.string().default(''),
+      agentType: z.string().default(''),
+      envVars: z.record(z.string(), z.string()).default({}),
+      setupScript: z.string().default(''),
+      teardownScript: z.string().default(''),
+      branchPattern: z.string().default(''),
+    }))
+    .mutation((): WorkspaceTemplate => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
+
+  delete: publicProcedure
+    .input(z.object({ id: z.string() }))
+    .mutation((): void => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
+
+  applyToWorkspace: publicProcedure
+    .input(z.object({ templateId: z.string(), workspaceId: z.string() }))
+    .mutation((): { success: boolean } => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
 });
 
 /**
@@ -278,7 +368,7 @@ export const sessionRouter = router({
     }),
 
   resume: publicProcedure
-    .input(z.object({ sessionId: z.string().uuid() }))
+    .input(z.object({ sessionId: z.string().uuid(), restart: z.boolean().optional() }))
     .mutation(() => {
       throw new Error('Not implemented — use IPC handler');
     }),
@@ -322,6 +412,139 @@ export const sessionRouter = router({
   getPromptHistory: publicProcedure
     .input(z.object({ sessionId: z.string(), limit: z.number().int().positive().max(100).optional() }))
     .query((): Array<{ id: string; text: string; created_at: string }> => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
+
+  rename: publicProcedure
+    .input(z.object({ sessionId: z.string(), name: z.string().min(1).max(30) }))
+    .mutation((): Session => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
+
+  setFavorite: publicProcedure
+    .input(z.object({ sessionId: z.string(), favorite: z.boolean() }))
+    .mutation((): Session => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
+
+  // ── M3-01: 세션 비용 조회 ─────────────────────────────────────────────
+  getCost: publicProcedure
+    .input(z.object({ sessionId: z.string() }))
+    .query((): SessionCostSummary => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
+
+  // ── M3-02: 작업 진행률 조회 ───────────────────────────────────────────
+  getTasks: publicProcedure
+    .input(z.object({ sessionId: z.string() }))
+    .query((): TaskItem[] => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
+
+  // ── M3-04: 에러 정보 조회 ────────────────────────────────────────────
+  getLastError: publicProcedure
+    .input(z.object({ sessionId: z.string() }))
+    .query((): ErrorInfo | null => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
+
+  // ── M3: 세션 인텔리전스 전체 조회 ────────────────────────────────────
+  getIntelligence: publicProcedure
+    .input(z.object({ sessionId: z.string() }))
+    .query((): SessionIntelligence | null => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
+
+  // ── M3: 인텔리전스 실시간 구독 ───────────────────────────────────────
+  subscribeIntelligence: publicProcedure
+    .input(z.object({ sessionId: z.string() }))
+    .subscription(() => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
+
+  // ── M4-01: 파이프라인 의존성 설정 ────────────────────────────────────
+  setPipeline: publicProcedure
+    .input(z.object({ sessionId: z.string(), dependsOnSessionId: z.string().nullable() }))
+    .mutation((): Session => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
+
+  // ── M4-02: 컨텍스트 소스 설정 ────────────────────────────────────────
+  setContextSource: publicProcedure
+    .input(z.object({ sessionId: z.string(), contextSourceSessionId: z.string().nullable() }))
+    .mutation((): Session => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
+
+  getContextOutput: publicProcedure
+    .input(z.object({ sessionId: z.string(), lines: z.number().int().positive().max(200).default(100) }))
+    .query((): string => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
+
+  // ── M4-03: 일괄 제어 ────────────────────────────────────────────────
+  stopAll: publicProcedure.mutation((): { stopped: number } => {
+    throw new Error('Not implemented — use IPC handler');
+  }),
+
+  restartAllErrors: publicProcedure.mutation((): { restarted: number } => {
+    throw new Error('Not implemented — use IPC handler');
+  }),
+
+  // ── M4-05: 라벨 관리 ────────────────────────────────────────────────
+  addLabel: publicProcedure
+    .input(z.object({ sessionId: z.string(), labelName: z.string().min(1).max(20), labelColor: z.string() }))
+    .mutation((): SessionLabel => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
+
+  removeLabel: publicProcedure
+    .input(z.object({ sessionId: z.string(), labelName: z.string() }))
+    .mutation((): void => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
+
+  getLabels: publicProcedure
+    .input(z.object({ sessionId: z.string() }))
+    .query((): SessionLabel[] => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
+
+  listByLabel: publicProcedure
+    .input(z.object({ labelName: z.string() }))
+    .query((): Session[] => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
+
+  // ── M7-03: 세션 자동 정리 (GC) ──────────────────────────────────────
+  gc: publicProcedure
+    .input(z.object({ dryRun: z.boolean().default(true) }))
+    .mutation((): { archivedCount: number; archivedIds: string[] } => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
+
+  archive: publicProcedure
+    .input(z.object({ sessionId: z.string() }))
+    .mutation((): { success: boolean } => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
+
+  // ── M9-02: 세션 내보내기 ────────────────────────────────────────────────
+  export: publicProcedure
+    .input(z.object({
+      sessionId: z.string(),
+      format: z.enum(['html', 'txt', 'json']),
+      includeTimestamp: z.boolean().default(true),
+      includeAnsi: z.boolean().default(false),
+    }))
+    .mutation((): { success: boolean; filePath: string } => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
+
+  // ── M9-04: 세션 아카이브 검색 ──────────────────────────────────────────
+  searchArchive: publicProcedure
+    .input(z.object({ query: z.string().min(1) }))
+    .query((): ArchiveSearchResult[] => {
       throw new Error('Not implemented — use IPC handler');
     }),
 });
@@ -558,6 +781,177 @@ export const gitRouter = router({
       throw new Error('Not implemented — use IPC handler');
     }),
 
+  // ── F-M1-01: Commit History ─────────────────────────────────────────────
+  getHistory: publicProcedure
+    .input(z.object({
+      repoPath: z.string().min(1),
+      limit: z.number().int().positive().max(200).default(50),
+    }))
+    .query((): Array<{ hash: string; shortHash: string; message: string; author: string; date: string; refs: string; graph: string }> => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
+
+  showCommit: publicProcedure
+    .input(z.object({
+      repoPath: z.string().min(1),
+      commitHash: z.string().min(1),
+    }))
+    .query((): { raw: string; hunks: DiffHunk[] } => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
+
+  // ── F-M1-02: Stash Management ──────────────────────────────────────────
+  stashList: publicProcedure
+    .input(z.object({ repoPath: z.string().min(1) }))
+    .query((): Array<{ index: number; message: string; ref: string }> => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
+
+  stashPush: publicProcedure
+    .input(z.object({
+      repoPath: z.string().min(1),
+      message: z.string().optional(),
+    }))
+    .mutation((): string => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
+
+  stashPop: publicProcedure
+    .input(z.object({
+      repoPath: z.string().min(1),
+      index: z.number().int().min(0).default(0),
+    }))
+    .mutation((): string => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
+
+  stashDrop: publicProcedure
+    .input(z.object({
+      repoPath: z.string().min(1),
+      index: z.number().int().min(0).default(0),
+    }))
+    .mutation((): string => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
+
+  // ── F-M1-03: Fetch & Remote Branch Tracking ────────────────────────────
+  fetch: publicProcedure
+    .input(z.object({ repoPath: z.string().min(1) }))
+    .mutation((): { success: boolean } => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
+
+  getBranchStatus: publicProcedure
+    .input(z.object({ repoPath: z.string().min(1) }))
+    .query((): { current: string; ahead: number; behind: number; tracking: string | null } => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
+
+  // ── F-M1-04: Git Reset & Revert ────────────────────────────────────────
+  reset: publicProcedure
+    .input(z.object({
+      repoPath: z.string().min(1),
+      commitHash: z.string().min(1),
+      mode: z.enum(['soft', 'mixed', 'hard']),
+    }))
+    .mutation((): string => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
+
+  revert: publicProcedure
+    .input(z.object({
+      repoPath: z.string().min(1),
+      commitHash: z.string().min(1),
+    }))
+    .mutation((): string => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
+
+  discardAll: publicProcedure
+    .input(z.object({ repoPath: z.string().min(1) }))
+    .mutation((): string => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
+
+  // ── F-M1-05: Blame ─────────────────────────────────────────────────────
+  blame: publicProcedure
+    .input(z.object({
+      repoPath: z.string().min(1),
+      filePath: z.string().min(1),
+    }))
+    .query((): Array<{ lineNumber: number; commitHash: string; shortHash: string; author: string; date: string; message: string; content: string }> => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
+
+  // ── F-M1-06: Tag Management ───────────────────────────────────────────
+  listTags: publicProcedure
+    .input(z.object({ repoPath: z.string().min(1) }))
+    .query((): Array<{ name: string; hash: string; message: string; isAnnotated: boolean; date: string }> => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
+
+  createTag: publicProcedure
+    .input(z.object({
+      repoPath: z.string().min(1),
+      name: z.string().min(1),
+      message: z.string().optional(),
+      annotated: z.boolean().default(true),
+    }))
+    .mutation((): string => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
+
+  deleteTag: publicProcedure
+    .input(z.object({
+      repoPath: z.string().min(1),
+      name: z.string().min(1),
+    }))
+    .mutation((): string => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
+
+  pushTags: publicProcedure
+    .input(z.object({ repoPath: z.string().min(1) }))
+    .mutation((): string => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
+
+  // ── F-M1-07: Cherry-pick ─────────────────────────────────────────────
+  cherryPick: publicProcedure
+    .input(z.object({
+      repoPath: z.string().min(1),
+      commitHash: z.string().min(1),
+    }))
+    .mutation((): { success: boolean; conflicts: string[] } => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
+
+  cherryPickAbort: publicProcedure
+    .input(z.object({ repoPath: z.string().min(1) }))
+    .mutation((): string => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
+
+  // ── F-M1-08: Squash Commits ──────────────────────────────────────────
+  getRecentCommits: publicProcedure
+    .input(z.object({
+      repoPath: z.string().min(1),
+      count: z.number().int().positive().max(50),
+    }))
+    .query((): Array<{ hash: string; shortHash: string; message: string }> => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
+
+  squashCommits: publicProcedure
+    .input(z.object({
+      repoPath: z.string().min(1),
+      count: z.number().int().positive().max(50),
+      message: z.string().min(1),
+    }))
+    .mutation((): string => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
+
   // ── Merge ────────────────────────────────────────────────────────────────
   merge: publicProcedure
     .input(z.object({
@@ -623,6 +1017,51 @@ export const mcpRouter = router({
   }),
 });
 
+// ── M4-04: presetRouter ──────────────────────────────────────────────────────
+
+export const presetRouter = router({
+  list: publicProcedure.query((): AgentPreset[] => {
+    throw new Error('Not implemented — use IPC handler');
+  }),
+
+  create: publicProcedure
+    .input(z.object({
+      name: z.string().min(1),
+      agentId: z.string(),
+      workspaceId: z.string(),
+      initialCommand: z.string().default(''),
+      envVars: z.record(z.string(), z.string()).default({}),
+    }))
+    .mutation((): AgentPreset => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
+
+  update: publicProcedure
+    .input(z.object({
+      id: z.string(),
+      name: z.string().min(1).optional(),
+      agentId: z.string().optional(),
+      workspaceId: z.string().optional(),
+      initialCommand: z.string().optional(),
+      envVars: z.record(z.string(), z.string()).optional(),
+    }))
+    .mutation((): AgentPreset => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
+
+  delete: publicProcedure
+    .input(z.object({ id: z.string() }))
+    .mutation((): void => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
+
+  launch: publicProcedure
+    .input(z.object({ presetId: z.string(), cols: z.number().int().positive(), rows: z.number().int().positive() }))
+    .mutation((): Session => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
+});
+
 // ── Root app router ───────────────────────────────────────────────────────────
 
 /**
@@ -660,6 +1099,14 @@ export const shellRouter = router({
     }),
 });
 
+// ── M7-04: systemRouter ─────────────────────────────────────────────────────
+
+export const systemRouter = router({
+  openLogsFolder: publicProcedure.mutation((): { path: string } => {
+    throw new Error('Not implemented — use IPC handler');
+  }),
+});
+
 export interface ProcessMetrics {
   sessionId: string;
   pid: number;
@@ -679,6 +1126,152 @@ export const resourceRouter = router({
     .mutation(async () => {}),
 });
 
+export const fileRouter = router({
+  watchMarkdown: publicProcedure
+    .input(z.object({ filePath: z.string().min(1) }))
+    .subscription(() => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
+
+  readMarkdown: publicProcedure
+    .input(z.object({ filePath: z.string().min(1) }))
+    .query((): { content: string; exists: boolean } => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
+});
+
+// ── M6-02: webhookRouter ────────────────────────────────────────────────────
+
+export const webhookRouter = router({
+  list: publicProcedure.query((): Webhook[] => {
+    throw new Error('Not implemented — use IPC handler');
+  }),
+
+  create: publicProcedure
+    .input(z.object({
+      url: z.string().url(),
+      events: z.array(z.enum(['session.completed', 'session.error', 'agent.task_done', 'session.started'])),
+      secret: z.string().default(''),
+    }))
+    .mutation((): Webhook => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
+
+  update: publicProcedure
+    .input(z.object({
+      id: z.string(),
+      url: z.string().url().optional(),
+      events: z.array(z.enum(['session.completed', 'session.error', 'agent.task_done', 'session.started'])).optional(),
+      secret: z.string().optional(),
+      enabled: z.boolean().optional(),
+    }))
+    .mutation((): Webhook => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
+
+  delete: publicProcedure
+    .input(z.object({ id: z.string() }))
+    .mutation((): void => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
+
+  test: publicProcedure
+    .input(z.object({ id: z.string() }))
+    .mutation((): { success: boolean; statusCode: number | null } => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
+
+  getLogs: publicProcedure
+    .input(z.object({ webhookId: z.string(), limit: z.number().int().positive().max(100).default(20) }))
+    .query((): WebhookLog[] => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
+});
+
+// ── M6-03: apiKeyRouter ─────────────────────────────────────────────────────
+
+export const apiKeyRouter = router({
+  get: publicProcedure.query((): ApiKey | null => {
+    throw new Error('Not implemented — use IPC handler');
+  }),
+
+  generate: publicProcedure
+    .input(z.object({ name: z.string().default('Default') }))
+    .mutation((): ApiKey => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
+
+  revoke: publicProcedure
+    .input(z.object({ id: z.string() }))
+    .mutation((): void => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
+});
+
+// ── M6-05: relayRouter ──────────────────────────────────────────────────────
+
+export const relayRouter = router({
+  getStatus: publicProcedure.query((): { status: string; latencyMs: number | null } => {
+    throw new Error('Not implemented — use IPC handler');
+  }),
+
+  connect: publicProcedure.mutation((): { success: boolean } => {
+    throw new Error('Not implemented — use IPC handler');
+  }),
+
+  disconnect: publicProcedure.mutation((): { success: boolean } => {
+    throw new Error('Not implemented — use IPC handler');
+  }),
+});
+
+// ── M10-01: pluginRouter ────────────────────────────────────────────────────
+
+export const pluginRouter = router({
+  list: publicProcedure.query((): PluginInfo[] => {
+    throw new Error('Not implemented — use IPC handler');
+  }),
+
+  load: publicProcedure
+    .input(z.object({ pluginPath: z.string().min(1) }))
+    .mutation((): PluginInfo => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
+
+  unload: publicProcedure
+    .input(z.object({ pluginId: z.string() }))
+    .mutation((): void => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
+});
+
+// ── M9-03: profileRouter ───────────────────────────────────────────────────
+
+export const profileRouter = router({
+  export: publicProcedure.mutation((): { success: boolean; filePath: string } => {
+    throw new Error('Not implemented — use IPC handler');
+  }),
+
+  import: publicProcedure
+    .input(z.object({ mode: z.enum(['merge', 'overwrite']) }))
+    .mutation((): { success: boolean } => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
+});
+
+// ── M10-03: themeRouter ────────────────────────────────────────────────────
+
+export const themeRouter = router({
+  export: publicProcedure
+    .input(z.object({ name: z.string().min(1), variables: z.record(z.string(), z.string()) }))
+    .mutation((): { success: boolean; filePath: string } => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
+
+  import: publicProcedure.mutation((): CustomTheme | null => {
+    throw new Error('Not implemented — use IPC handler');
+  }),
+});
+
 export const appRouter = router({
   workspace: workspaceRouter,
   session: sessionRouter,
@@ -692,7 +1285,17 @@ export const appRouter = router({
   dialog: dialogRouter,
   appState: appStateRouter,
   shell: shellRouter,
+  system: systemRouter,
   resource: resourceRouter,
+  file: fileRouter,
+  preset: presetRouter,
+  template: templateRouter,
+  webhook: webhookRouter,
+  apiKey: apiKeyRouter,
+  relay: relayRouter,
+  plugin: pluginRouter,
+  profile: profileRouter,
+  theme: themeRouter,
 });
 
 // ── Type exports ──────────────────────────────────────────────────────────────
@@ -709,3 +1312,11 @@ export type PanesRouter = typeof panesRouter;
 export type LayoutRouter = typeof layoutRouter;
 export type GitRouter = typeof gitRouter;
 export type McpRouter = typeof mcpRouter;
+export type PresetRouter = typeof presetRouter;
+export type TemplateRouter = typeof templateRouter;
+export type WebhookRouter = typeof webhookRouter;
+export type ApiKeyRouter = typeof apiKeyRouter;
+export type RelayRouter = typeof relayRouter;
+export type PluginRouter = typeof pluginRouter;
+export type ProfileRouter = typeof profileRouter;
+export type ThemeRouter = typeof themeRouter;

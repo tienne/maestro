@@ -1,10 +1,9 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
-import type { Session } from '@maestro/shared-types';
-
-export type RightPanelTab = 'files' | 'git' | 'commit' | 'merge' | 'ports';
+export type RightPanelTab = 'files' | 'git' | 'history' | 'merge' | 'ports' | 'markdown';
 export type SplitLayout = 'single' | 'horizontal' | 'vertical';
-export type CurrentView = 'terminal' | 'repoSettings';
+export type CurrentView = 'terminal' | 'settings';
+export type RelayStatus = 'connected' | 'connecting' | 'disconnected';
 
 interface PaneState {
   sessionId: string | null;
@@ -19,7 +18,18 @@ interface UiStore {
   activePaneIndex: 0 | 1;
   currentView: CurrentView;
   settingsRepoId: string | null;
-  pendingResumeSession: Session | null;
+  settingsSection: string | null;
+  blameFilePath: string | null;
+  /** M3-03: 마크다운 패널 파일 경로 */
+  markdownFilePath: string | null;
+  /** 핀된 탭 세션 ID 목록 */
+  pinnedTabs: string[];
+  /** 탭 순서 (세션 ID 배열) */
+  tabOrder: string[];
+  /** M6-05: Relay 연결 상태 */
+  relayStatus: RelayStatus;
+  /** M6-05: Relay 지연 시간 (ms) */
+  relayLatencyMs: number | null;
 
   setSidebarWidth: (w: number) => void;
   setRightSidebarWidth: (w: number) => void;
@@ -29,7 +39,15 @@ interface UiStore {
   setActivePaneIndex: (index: 0 | 1) => void;
   setCurrentView: (view: CurrentView) => void;
   openRepoSettings: (repoId: string) => void;
-  setPendingResumeSession: (session: Session | null) => void;
+  openSettings: (section?: string) => void;
+  openBlame: (filePath: string) => void;
+  closeBlame: () => void;
+  setMarkdownFilePath: (filePath: string | null) => void;
+  openMarkdownPanel: (filePath: string) => void;
+  togglePinTab: (sessionId: string) => void;
+  setTabOrder: (order: string[]) => void;
+  setRelayStatus: (status: RelayStatus) => void;
+  setRelayLatencyMs: (ms: number | null) => void;
 }
 
 export const useUiStore = create<UiStore>()(
@@ -43,7 +61,13 @@ export const useUiStore = create<UiStore>()(
       activePaneIndex: 0,
       currentView: 'terminal',
       settingsRepoId: null,
-      pendingResumeSession: null,
+      settingsSection: null,
+      blameFilePath: null,
+      markdownFilePath: null,
+      pinnedTabs: [],
+      tabOrder: [],
+      relayStatus: 'disconnected',
+      relayLatencyMs: null,
 
       setSidebarWidth: (w) => set({ sidebarWidth: w }),
       setRightSidebarWidth: (w) => set({ rightSidebarWidth: w }),
@@ -59,8 +83,24 @@ export const useUiStore = create<UiStore>()(
 
       setActivePaneIndex: (index) => set({ activePaneIndex: index }),
       setCurrentView: (view) => set({ currentView: view }),
-      openRepoSettings: (repoId) => set({ currentView: 'repoSettings', settingsRepoId: repoId }),
-      setPendingResumeSession: (session) => set({ pendingResumeSession: session }),
+      openRepoSettings: (repoId) => set({ currentView: 'settings', settingsSection: 'repositories', settingsRepoId: repoId }),
+      openSettings: (section) => set({ currentView: 'settings', settingsSection: section ?? null }),
+      openBlame: (filePath) => set({ blameFilePath: filePath, rightPanelTab: 'files' }),
+      closeBlame: () => set({ blameFilePath: null }),
+      setMarkdownFilePath: (filePath) => set({ markdownFilePath: filePath }),
+      openMarkdownPanel: (filePath) => set({ markdownFilePath: filePath, rightPanelTab: 'markdown' }),
+
+      togglePinTab: (sessionId) =>
+        set((s) => {
+          const pinned = s.pinnedTabs.includes(sessionId)
+            ? s.pinnedTabs.filter((id) => id !== sessionId)
+            : [...s.pinnedTabs, sessionId];
+          return { pinnedTabs: pinned };
+        }),
+
+      setTabOrder: (order) => set({ tabOrder: order }),
+      setRelayStatus: (relayStatus) => set({ relayStatus }),
+      setRelayLatencyMs: (relayLatencyMs) => set({ relayLatencyMs }),
     }),
     {
       name: 'maestro-ui',
@@ -70,6 +110,8 @@ export const useUiStore = create<UiStore>()(
         rightSidebarWidth: s.rightSidebarWidth,
         rightPanelTab: s.rightPanelTab,
         splitLayout: s.splitLayout,
+        pinnedTabs: s.pinnedTabs,
+        tabOrder: s.tabOrder,
       }),
     }
   )

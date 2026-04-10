@@ -31,9 +31,10 @@ interface TreeNodeProps {
   statusMap: GitStatusMap;
   repoPath: string;
   onFileClick: (filePath: string) => void;
+  onBlame?: (filePath: string) => void;
 }
 
-function TreeNode({ entry, depth, statusMap, repoPath, onFileClick }: TreeNodeProps) {
+function TreeNode({ entry, depth, statusMap, repoPath, onFileClick, onBlame }: TreeNodeProps) {
   const [children, setChildren] = useState<FsEntry[] | null>(null);
   const [expanded, setExpanded] = useState(false);
   const [shouldFetch, setShouldFetch] = useState(false);
@@ -74,6 +75,15 @@ function TreeNode({ entry, depth, statusMap, repoPath, onFileClick }: TreeNodePr
 
   const handleOpenExternal = () => {
     openFileMutation.mutate({ filePath: entry.path });
+    setContextMenu(null);
+  };
+
+  const handleBlame = () => {
+    if (onBlame) {
+      // 상대 경로로 변환
+      const relativePath = entry.path.replace(repoPath + '/', '');
+      onBlame(relativePath);
+    }
     setContextMenu(null);
   };
 
@@ -121,6 +131,15 @@ function TreeNode({ entry, depth, statusMap, repoPath, onFileClick }: TreeNodePr
             >
               IDE로 열기
             </button>
+            {!entry.isDir && onBlame && (
+              <button
+                className="w-full px-3 py-1.5 text-left hover:bg-[var(--bg-hover)]"
+                style={{ color: 'var(--text-primary)' }}
+                onClick={handleBlame}
+              >
+                Blame
+              </button>
+            )}
           </div>
         </>
       )}
@@ -133,13 +152,18 @@ function TreeNode({ entry, depth, statusMap, repoPath, onFileClick }: TreeNodePr
           statusMap={statusMap}
           repoPath={repoPath}
           onFileClick={onFileClick}
+          onBlame={onBlame}
         />
       ))}
     </div>
   );
 }
 
-export function FileTree({ workspace }: Props) {
+interface FileTreeProps extends Props {
+  onBlame?: (filePath: string) => void;
+}
+
+export function FileTree({ workspace, onBlame }: FileTreeProps) {
   const { setRightPanelTab } = useUiStore();
 
   const query = trpc.git.readDir.useQuery(
@@ -200,6 +224,7 @@ export function FileTree({ workspace }: Props) {
             statusMap={statusMap}
             repoPath={workspace.worktreePath}
             onFileClick={handleFileClick}
+            onBlame={onBlame}
           />
         ))
       )}
