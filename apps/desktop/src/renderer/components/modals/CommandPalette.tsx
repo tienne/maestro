@@ -1,7 +1,10 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Command } from 'cmdk';
+import Fuse from 'fuse.js';
 import { useSessionStore } from '../../store/sessionStore';
 import { useWorkspaceStore } from '../../store/workspaceStore';
+import { useAgentStore } from '../../store/agentStore';
+import { useRepositoryStore } from '../../store/repositoryStore';
 import { useUiStore } from '../../store/uiStore';
 
 interface Props {
@@ -18,7 +21,7 @@ interface CommandItem {
 
 /**
  * ⌘K 커맨드 팔레트.
- * 세션/워크스페이스/Git 액션/설정 그룹으로 명령을 퍼지 검색하여 실행한다.
+ * fuse.js 퍼지 검색으로 세션/워크스페이스/저장소/에이전트/Git 액션/레이아웃 명령을 실행한다.
  */
 export function CommandPalette({ open, onClose }: Props) {
   const [search, setSearch] = useState('');
@@ -26,6 +29,8 @@ export function CommandPalette({ open, onClose }: Props) {
 
   const sessions = useSessionStore((s) => s.sessions);
   const workspaces = useWorkspaceStore((s) => s.workspaces);
+  const agents = useAgentStore((s) => s.agents);
+  const repositories = useRepositoryStore((s) => s.repositories);
   const { setSplitLayout, setRightPanelTab, setSidebarWidth, sidebarWidth } = useUiStore();
 
   useEffect(() => {
@@ -43,7 +48,7 @@ export function CommandPalette({ open, onClose }: Props) {
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [open, onClose]);
 
-  const commands: CommandItem[] = [
+  const allCommands: CommandItem[] = useMemo(() => [
     // Sessions
     ...sessions.map((s) => ({
       id: `session-${s.id}`,
@@ -59,67 +64,53 @@ export function CommandPalette({ open, onClose }: Props) {
       id: `ws-${ws.id}`,
       label: `워크스페이스: ${ws.name}`,
       group: 'Workspaces',
-      action: () => {
-        onClose();
-      },
+      action: () => { onClose(); },
+    })),
+    // Repositories
+    ...repositories.map((r) => ({
+      id: `repo-${r.id}`,
+      label: `저장소: ${r.name}`,
+      group: 'Repositories',
+      action: () => { onClose(); },
+    })),
+    // Agents
+    ...agents.map((a) => ({
+      id: `agent-${a.id}`,
+      label: `에이전트: ${a.name}`,
+      group: 'Agents',
+      action: () => { onClose(); },
     })),
     // Git actions
-    {
-      id: 'git-panel',
-      label: 'Git 패널 열기',
-      group: 'Git',
-      action: () => {
-        setRightPanelTab('git');
-        onClose();
-      },
-    },
-    {
-      id: 'git-commit',
-      label: 'Git 커밋 패널',
-      group: 'Git',
-      action: () => {
-        setRightPanelTab('commit');
-        onClose();
-      },
-    },
+    { id: 'git-panel', label: 'Git 패널 열기', group: 'Git', action: () => { setRightPanelTab('git'); onClose(); } },
+    { id: 'git-commit', label: 'Git 커밋 패널', group: 'Git', action: () => { setRightPanelTab('commit'); onClose(); } },
     // Layout
-    {
-      id: 'layout-split-v',
-      label: '터미널 세로 분할',
-      group: 'Layout',
-      action: () => {
-        setSplitLayout('vertical');
-        onClose();
-      },
-    },
-    {
-      id: 'layout-split-h',
-      label: '터미널 가로 분할',
-      group: 'Layout',
-      action: () => {
-        setSplitLayout('horizontal');
-        onClose();
-      },
-    },
-    {
-      id: 'layout-single',
-      label: '단일 터미널 뷰',
-      group: 'Layout',
-      action: () => {
-        setSplitLayout('single');
-        onClose();
-      },
-    },
+    { id: 'layout-split-v', label: '터미널 세로 분할', group: 'Layout', action: () => { setSplitLayout('vertical'); onClose(); } },
+    { id: 'layout-split-h', label: '터미널 가로 분할', group: 'Layout', action: () => { setSplitLayout('horizontal'); onClose(); } },
+    { id: 'layout-single', label: '단일 터미널 뷰', group: 'Layout', action: () => { setSplitLayout('single'); onClose(); } },
     {
       id: 'sidebar-toggle',
       label: sidebarWidth > 0 ? '사이드바 숨기기' : '사이드바 표시',
       group: 'Layout',
-      action: () => {
-        setSidebarWidth(sidebarWidth > 0 ? 0 : 280);
-        onClose();
-      },
+      action: () => { setSidebarWidth(sidebarWidth > 0 ? 0 : 280); onClose(); },
     },
-  ];
+  ], [sessions, workspaces, repositories, agents, setSplitLayout, setRightPanelTab, setSidebarWidth, sidebarWidth, onClose]);
+
+  // fuse.js 퍼지 검색
+  const fuse = useMemo(() => new Fuse(allCommands, { keys: ['label'], threshold: 0.4, includeScore: true }), [allCommands]);
+
+  const commands = useMemo(() => {
+    if (!search.trim()) return allCommands;
+    return fuse.search(search).map((r) => r.item);
+  }, [search, allCommands, fuse]);
+
+  const groups = useMemo(() => {
+    const map = new Map<string, CommandItem[]>();
+    for (const cmd of commands) {
+      if (!map.has(cmd.group)) map.set(cmd.group, []);
+      map.get(cmd.group)!.push(cmd);
+    }
+    return map;
+  }, [commands]);
 
   if (!open) return null;
 
@@ -168,30 +159,26 @@ export function CommandPalette({ open, onClose }: Props) {
               결과 없음
             </Command.Empty>
 
-            {['Sessions', 'Workspaces', 'Git', 'Layout'].map((group) => {
-              const items = commands.filter((c) => c.group === group);
-              if (items.length === 0) return null;
-              return (
-                <Command.Group
-                  key={group}
-                  heading={group}
-                  className="[&_[cmdk-group-heading]]:px-4 [&_[cmdk-group-heading]]:py-1 [&_[cmdk-group-heading]]:text-xs [&_[cmdk-group-heading]]:font-semibold"
-                  style={{ '--tw-text-opacity': '1' } as React.CSSProperties}
-                >
-                  {items.map((item) => (
-                    <Command.Item
-                      key={item.id}
-                      value={item.label}
-                      onSelect={item.action}
-                      className="px-4 py-2 text-sm cursor-pointer flex items-center gap-2 aria-selected:bg-[var(--accent)] aria-selected:bg-opacity-20"
-                      style={{ color: 'var(--text-primary)' }}
-                    >
-                      {item.label}
-                    </Command.Item>
-                  ))}
-                </Command.Group>
-              );
-            })}
+            {Array.from(groups.entries()).map(([group, items]) => (
+              <Command.Group
+                key={group}
+                heading={group}
+                className="[&_[cmdk-group-heading]]:px-4 [&_[cmdk-group-heading]]:py-1 [&_[cmdk-group-heading]]:text-xs [&_[cmdk-group-heading]]:font-semibold"
+                style={{ '--tw-text-opacity': '1' } as React.CSSProperties}
+              >
+                {items.map((item) => (
+                  <Command.Item
+                    key={item.id}
+                    value={item.label}
+                    onSelect={item.action}
+                    className="px-4 py-2 text-sm cursor-pointer flex items-center gap-2 aria-selected:bg-[var(--accent)] aria-selected:bg-opacity-20"
+                    style={{ color: 'var(--text-primary)' }}
+                  >
+                    {item.label}
+                  </Command.Item>
+                ))}
+              </Command.Group>
+            ))}
           </Command.List>
         </Command>
       </div>
