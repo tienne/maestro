@@ -2,6 +2,8 @@ import { useUiStore, type RightPanelTab } from '../../store/uiStore';
 import { FileTree } from './FileTree';
 import { GitDiffView } from './GitDiffView';
 import { CommitPanel } from './CommitPanel';
+import { MergePanel } from './MergePanel';
+import { PortsPanel } from './PortsPanel';
 import { useWorkspaceStore } from '../../store/workspaceStore';
 import { useSessionStore } from '../../store/sessionStore';
 
@@ -9,6 +11,8 @@ const TABS: { id: RightPanelTab; label: string }[] = [
   { id: 'files', label: 'Files' },
   { id: 'git', label: 'Git' },
   { id: 'commit', label: 'Commit' },
+  { id: 'merge', label: 'Merge' },
+  { id: 'ports', label: 'Ports' },
 ];
 
 export function RightSidebar() {
@@ -47,7 +51,9 @@ export function RightSidebar() {
 
       {/* Tab content */}
       <div className="flex-1 overflow-hidden">
-        {!activeWorkspace ? (
+        {rightPanelTab === 'ports' ? (
+          <PortsPanel />
+        ) : !activeWorkspace ? (
           <div className="h-full flex items-center justify-center text-xs px-4 text-center" style={{ color: 'var(--text-muted)' }}>
             Select a workspace to view files
           </div>
@@ -55,6 +61,8 @@ export function RightSidebar() {
           <FileTree workspace={activeWorkspace} />
         ) : rightPanelTab === 'git' ? (
           <GitDiffView workspace={activeWorkspace} />
+        ) : rightPanelTab === 'merge' ? (
+          <MergePanel workspace={activeWorkspace} />
         ) : (
           <CommitPanel workspace={activeWorkspace} />
         )}
