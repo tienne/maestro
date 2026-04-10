@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { persist, createJSONStorage } from 'zustand/middleware';
 import type { Session } from '@maestro/shared-types';
 
 export type RightPanelTab = 'files' | 'git' | 'commit' | 'merge' | 'ports';
@@ -31,31 +32,45 @@ interface UiStore {
   setPendingResumeSession: (session: Session | null) => void;
 }
 
-export const useUiStore = create<UiStore>((set) => ({
-  sidebarWidth: 280,
-  rightSidebarWidth: 320,
-  rightPanelTab: 'files',
-  splitLayout: 'single',
-  panes: [{ sessionId: null }, { sessionId: null }],
-  activePaneIndex: 0,
-  currentView: 'terminal',
-  settingsRepoId: null,
-  pendingResumeSession: null,
+export const useUiStore = create<UiStore>()(
+  persist(
+    (set) => ({
+      sidebarWidth: 280,
+      rightSidebarWidth: 320,
+      rightPanelTab: 'files',
+      splitLayout: 'single',
+      panes: [{ sessionId: null }, { sessionId: null }],
+      activePaneIndex: 0,
+      currentView: 'terminal',
+      settingsRepoId: null,
+      pendingResumeSession: null,
 
-  setSidebarWidth: (w) => set({ sidebarWidth: w }),
-  setRightSidebarWidth: (w) => set({ rightSidebarWidth: w }),
-  setRightPanelTab: (tab) => set({ rightPanelTab: tab }),
-  setSplitLayout: (layout) => set({ splitLayout: layout }),
+      setSidebarWidth: (w) => set({ sidebarWidth: w }),
+      setRightSidebarWidth: (w) => set({ rightSidebarWidth: w }),
+      setRightPanelTab: (tab) => set({ rightPanelTab: tab }),
+      setSplitLayout: (layout) => set({ splitLayout: layout }),
 
-  setPaneSession: (paneIndex, sessionId) =>
-    set((s) => {
-      const panes = [...s.panes] as [PaneState, PaneState];
-      panes[paneIndex] = { sessionId };
-      return { panes };
+      setPaneSession: (paneIndex, sessionId) =>
+        set((s) => {
+          const panes = [...s.panes] as [PaneState, PaneState];
+          panes[paneIndex] = { sessionId };
+          return { panes };
+        }),
+
+      setActivePaneIndex: (index) => set({ activePaneIndex: index }),
+      setCurrentView: (view) => set({ currentView: view }),
+      openRepoSettings: (repoId) => set({ currentView: 'repoSettings', settingsRepoId: repoId }),
+      setPendingResumeSession: (session) => set({ pendingResumeSession: session }),
     }),
-
-  setActivePaneIndex: (index) => set({ activePaneIndex: index }),
-  setCurrentView: (view) => set({ currentView: view }),
-  openRepoSettings: (repoId) => set({ currentView: 'repoSettings', settingsRepoId: repoId }),
-  setPendingResumeSession: (session) => set({ pendingResumeSession: session }),
-}));
+    {
+      name: 'maestro-ui',
+      storage: createJSONStorage(() => localStorage),
+      partialize: (s) => ({
+        sidebarWidth: s.sidebarWidth,
+        rightSidebarWidth: s.rightSidebarWidth,
+        rightPanelTab: s.rightPanelTab,
+        splitLayout: s.splitLayout,
+      }),
+    }
+  )
+);
