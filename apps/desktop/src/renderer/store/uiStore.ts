@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import type { Session } from '@maestro/shared-types';
 
-export type RightPanelTab = 'files' | 'git' | 'commit';
+export type RightPanelTab = 'files' | 'git' | 'commit' | 'merge' | 'ports';
 export type SplitLayout = 'single' | 'horizontal' | 'vertical';
 export type CurrentView = 'terminal' | 'repoSettings';
 

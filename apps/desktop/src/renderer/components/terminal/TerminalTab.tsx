@@ -1,3 +1,5 @@
+import { useAgentStore } from '../../store/agentStore';
+import { AgentIcon } from '../shared/AgentIcon';
 import type { Session } from '@maestro/shared-types';
 
 interface Props {
@@ -8,6 +10,9 @@ interface Props {
 }
 
 export function TerminalTab({ session, isActive, onClick, onClose }: Props) {
+  const { agents } = useAgentStore();
+  const agent = agents.find((a) => a.id === session.agentId);
+
   return (
     <button
       onClick={onClick}
@@ -23,6 +28,7 @@ export function TerminalTab({ session, isActive, onClick, onClose }: Props) {
         borderRightColor: 'var(--border)',
       }}
     >
+      {/* 세션 상태 dot */}
       <span
         className={`w-2 h-2 rounded-full flex-shrink-0 ${
           session.status === 'running'
@@ -33,7 +39,24 @@ export function TerminalTab({ session, isActive, onClick, onClose }: Props) {
         }`}
         title={session.status === 'running' ? '실행 중' : session.status === 'error' ? '에러' : '중지됨'}
       />
-      <span className="max-w-[120px] truncate text-sm">{session.name}</span>
+
+      {/* 에이전트 아이콘 */}
+      {agent && <AgentIcon agent={agent} size="sm" />}
+
+      {/* 세션 이름 */}
+      <span className="max-w-[100px] truncate text-sm">{session.name}</span>
+
+      {/* 에이전트 이름 레이블 */}
+      {agent && (
+        <span
+          className="text-[10px] leading-none flex-shrink-0"
+          style={{ color: isActive ? 'var(--text-secondary)' : 'var(--text-muted)' }}
+        >
+          {agent.name}
+        </span>
+      )}
+
+      {/* 닫기 버튼 */}
       <span
         role="button"
         onClick={(e) => { e.stopPropagation(); onClose(); }}

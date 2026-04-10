@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useRepositoryStore } from '../../store/repositoryStore';
 import { useWorkspaceStore } from '../../store/workspaceStore';
 import { useSessionStore } from '../../store/sessionStore';
@@ -6,36 +6,32 @@ import { useUiStore } from '../../store/uiStore';
 import { trpc } from '../../lib/trpc';
 import { AddRepositoryModal } from '../modals/AddRepositoryModal';
 import { CreateWorkspaceModal } from '../modals/CreateWorkspaceModal';
-import { CreateSessionModal } from '../modals/CreateSessionModal';
 import { AgentSettingsModal } from '../modals/AgentSettingsModal';
 import { SettingsModal } from '../modals/SettingsModal';
 import { MCPServersModal } from '../modals/MCPServersModal';
 import { GitPanel } from '../git-panel/GitPanel';
-import type { Workspace } from '@maestro/shared-types';
+import type { Workspace, IdeType } from '@maestro/shared-types';
 
 type LeftTab = 'repos' | 'git';
 
-const SESSION_STATUS_COLORS: Record<string, string> = {
-  pending: 'bg-yellow-500 animate-pulse',
-  running: 'bg-green-400 animate-pulse',
-  stopped: 'bg-gray-500',
-  error: 'bg-red-400',
-};
+const IDE_OPTIONS: { id: IdeType; label: string; shortLabel: string }[] = [
+  { id: 'vscode', label: 'VS Code', shortLabel: 'VS' },
+  { id: 'cursor', label: 'Cursor', shortLabel: 'Cu' },
+  { id: 'webstorm', label: 'WebStorm', shortLabel: 'WS' },
+  { id: 'zed', label: 'Zed', shortLabel: 'Zd' },
+];
 
 export function LeftSidebar() {
   const { repositories } = useRepositoryStore();
   const { workspaces } = useWorkspaceStore();
-  const { sessions, setActiveSession, activeSessionId } = useSessionStore();
-  const { openRepoSettings, setCurrentView, setPaneSession, activePaneIndex } = useUiStore();
+  const { sessions, activeSessionId } = useSessionStore();
+  const { openRepoSettings } = useUiStore();
 
   const [leftTab, setLeftTab] = useState<LeftTab>('repos');
   const [expandedRepoIds, setExpandedRepoIds] = useState<Set<string>>(new Set());
-  const [expandedWorkspaceIds, setExpandedWorkspaceIds] = useState<Set<string>>(new Set());
   const [showAddRepo, setShowAddRepo] = useState(false);
   const [showCreateWorkspace, setShowCreateWorkspace] = useState(false);
   const [createWorkspaceForRepoId, setCreateWorkspaceForRepoId] = useState<string | null>(null);
-  const [showCreateSession, setShowCreateSession] = useState(false);
-  const [sessionWorkspace, setSessionWorkspace] = useState<Workspace | null>(null);
   const [showAgentSettings, setShowAgentSettings] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showMcpServers, setShowMcpServers] = useState(false);
@@ -44,7 +40,12 @@ export function LeftSidebar() {
   const activeSession = sessions.find((s) => s.id === activeSessionId);
   const activeWorkspace = workspaces.find((w) => w.id === activeSession?.workspaceId);
 
-  const setLastActiveMutation = trpc.session.setLastActive.useMutation();
+  const openInIdeMutation = trpc.workspace.openInIde.useMutation();
+
+  const totalRunningCount = useMemo(
+    () => sessions.filter((s) => s.status === 'running').length,
+    [sessions],
+  );
 
   const toggleRepo = (repoId: string) => {
     setExpandedRepoIds((prev) => {
@@ -55,45 +56,20 @@ export function LeftSidebar() {
     });
   };
 
-  const toggleWorkspace = (wsId: string) => {
-    setExpandedWorkspaceIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(wsId)) next.delete(wsId);
-      else next.add(wsId);
-      return next;
-    });
-  };
-
-  const handleWorkspaceClick = (ws: Workspace) => {
-    const wsSessions = sessions.filter((s) => s.workspaceId === ws.id);
-    const runningSession = wsSessions.find((s) => s.status === 'running');
-
-    if (runningSession) {
-      setActiveSession(runningSession.id);
-      setPaneSession(activePaneIndex, runningSession.id);
-      setCurrentView('terminal');
-      if (!expandedWorkspaceIds.has(ws.id)) toggleWorkspace(ws.id);
-    } else {
-      if (!expandedWorkspaceIds.has(ws.id)) toggleWorkspace(ws.id);
-      handleAddSession(ws);
-    }
-  };
-
-  const handleSessionClick = (sessionId: string) => {
-    setActiveSession(sessionId);
-    setPaneSession(activePaneIndex, sessionId);
-    setCurrentView('terminal');
-    setLastActiveMutation.mutate({ sessionId });
-  };
-
   const handleAddWorkspace = (repoId: string) => {
     setCreateWorkspaceForRepoId(repoId);
     setShowCreateWorkspace(true);
   };
 
-  const handleAddSession = (ws: Workspace) => {
-    setSessionWorkspace(ws);
-    setShowCreateSession(true);
+  const handleOpenInIde = (ws: Workspace, ide: IdeType) => {
+    openInIdeMutation.mutate(
+      { workspaceId: ws.id, ide },
+      {
+        onError: (err) => {
+          console.error(`Failed to open in ${ide}:`, err.message);
+        },
+      },
+    );
   };
 
   return (
@@ -110,11 +86,21 @@ export function LeftSidebar() {
         className="flex items-center justify-between px-3 py-2 border-b"
         style={{ borderColor: 'var(--border)' }}
       >
-        <span
-          className="text-xs font-semibold uppercase tracking-wider"
-          style={{ color: 'var(--text-secondary)' }}
-        >
-          Maestro
+        <span className="flex items-center gap-2">
+          <span
+            className="text-xs font-semibold uppercase tracking-wider"
+            style={{ color: 'var(--text-secondary)' }}
+          >
+            Maestro
+          </span>
+          {totalRunningCount > 0 && (
+            <span
+              className="text-[10px] leading-none px-1.5 py-0.5 rounded-full font-medium"
+              style={{ color: '#22c55e', backgroundColor: 'rgba(34, 197, 94, 0.12)' }}
+            >
+              실행 중 {totalRunningCount}
+            </span>
+          )}
         </span>
         {leftTab === 'repos' && (
           <button
@@ -241,74 +227,56 @@ export function LeftSidebar() {
                       </div>
                     ) : (
                       repoWorkspaces.map((ws) => {
-                        const wsSessions = sessions.filter((s) => s.workspaceId === ws.id);
-                        const isWsExpanded = expandedWorkspaceIds.has(ws.id);
+                        const isActive = activeWorkspace?.id === ws.id;
+                        const wsRunningCount = sessions.filter(
+                          (s) => s.workspaceId === ws.id && s.status === 'running'
+                        ).length;
 
                         return (
                           <div key={ws.id}>
                             {/* Workspace Row */}
                             <div
-                              className="flex items-center gap-1.5 pl-6 pr-2 py-2 cursor-pointer group transition-colors"
-                              onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'var(--bg-hover)')}
-                              onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
-                              onClick={() => handleWorkspaceClick(ws)}
+                              className="flex items-center gap-1.5 pl-6 pr-2 py-2 cursor-default group transition-colors"
+                              style={{ backgroundColor: isActive ? 'var(--bg-active)' : undefined }}
+                              onMouseEnter={(e) => { if (!isActive) e.currentTarget.style.backgroundColor = 'var(--bg-hover)'; }}
+                              onMouseLeave={(e) => { if (!isActive) e.currentTarget.style.backgroundColor = 'transparent'; }}
                             >
                               <span
-                                className={`text-[9px] transition-transform flex-shrink-0 ${isWsExpanded ? 'rotate-90' : ''}`}
-                                style={{ color: 'var(--text-muted)' }}
-                              >
-                                ▶
-                              </span>
-                              <span
                                 className="text-xs truncate flex-1"
-                                style={{ color: 'var(--text-secondary)' }}
+                                style={{ color: isActive ? 'var(--text-primary)' : 'var(--text-secondary)' }}
                               >
                                 {ws.name}
                               </span>
-                              {wsSessions.length > 0 && (
-                                <div className="flex items-center gap-0.5 flex-shrink-0">
-                                  {wsSessions.map((s) => (
-                                    <span
-                                      key={s.id}
-                                      className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${SESSION_STATUS_COLORS[s.status] ?? 'bg-gray-500'}`}
-                                    />
-                                  ))}
-                                </div>
+                              {wsRunningCount > 0 && (
+                                <span
+                                  className="text-[10px] leading-none px-1.5 py-0.5 rounded-full font-medium flex-shrink-0"
+                                  style={{ color: '#22c55e', backgroundColor: 'rgba(34,197,94,0.12)' }}
+                                >
+                                  ● {wsRunningCount}
+                                </span>
                               )}
                               <span
-                                className="text-[10px] font-mono opacity-0 group-hover:opacity-100 transition-opacity"
+                                className="text-[10px] font-mono opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
                                 style={{ color: 'var(--text-muted)' }}
                               >
                                 {ws.branch}
                               </span>
-                              <button
-                                onClick={(e) => { e.stopPropagation(); handleAddSession(ws); }}
-                                className="opacity-0 group-hover:opacity-100 text-sm leading-none px-1.5 py-1 rounded transition-all"
-                                style={{ color: 'var(--text-secondary)' }}
-                                onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)'; e.currentTarget.style.backgroundColor = 'var(--bg-hover)'; }}
-                                onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-secondary)'; e.currentTarget.style.backgroundColor = 'transparent'; }}
-                                title="New Session"
-                              >
-                                +
-                              </button>
+                              <div className="opacity-0 group-hover:opacity-100 flex items-center gap-0.5 transition-opacity">
+                                {IDE_OPTIONS.map((ide) => (
+                                  <button
+                                    key={ide.id}
+                                    onClick={(e) => { e.stopPropagation(); handleOpenInIde(ws, ide.id); }}
+                                    className="text-[9px] leading-none px-1 py-0.5 rounded font-medium transition-colors"
+                                    style={{ color: 'var(--text-muted)' }}
+                                    onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)'; e.currentTarget.style.backgroundColor = 'var(--bg-hover)'; }}
+                                    onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-muted)'; e.currentTarget.style.backgroundColor = 'transparent'; }}
+                                    title={`Open in ${ide.label}`}
+                                  >
+                                    {ide.shortLabel}
+                                  </button>
+                                ))}
+                              </div>
                             </div>
-
-                            {/* Sessions */}
-                            {isWsExpanded && wsSessions.map((session) => (
-                              <button
-                                key={session.id}
-                                onClick={() => handleSessionClick(session.id)}
-                                className="w-full flex items-center gap-2 pl-10 pr-3 py-1 text-left text-xs transition-colors"
-                                style={{ color: 'var(--text-secondary)' }}
-                                onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--bg-hover)'; e.currentTarget.style.color = 'var(--text-primary)'; }}
-                                onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; e.currentTarget.style.color = 'var(--text-secondary)'; }}
-                              >
-                                <span
-                                  className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${SESSION_STATUS_COLORS[session.status] ?? 'bg-gray-500'}`}
-                                />
-                                <span className="truncate">{session.name}</span>
-                              </button>
-                            ))}
                           </div>
                         );
                       })
@@ -362,12 +330,6 @@ export function LeftSidebar() {
         <CreateWorkspaceModal
           repositoryId={createWorkspaceForRepoId}
           onClose={() => { setShowCreateWorkspace(false); setCreateWorkspaceForRepoId(null); }}
-        />
-      )}
-      {showCreateSession && sessionWorkspace && (
-        <CreateSessionModal
-          workspace={sessionWorkspace}
-          onClose={() => { setShowCreateSession(false); setSessionWorkspace(null); }}
         />
       )}
       {showAgentSettings && (

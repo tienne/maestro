@@ -7,6 +7,8 @@ interface Props {
   isActive: boolean;
   /** pending 세션: xterm이 마운트되고 실제 cols/rows 를 측정한 후 호출 */
   onReady?: (cols: number, rows: number) => void;
+  /** 세션 상태 — 'stopped'/'error' 이면 마운트 시 scrollback 복원 */
+  sessionStatus?: string;
 }
 
 // 150ms 타임 기반 디바운스
@@ -62,7 +64,7 @@ class DataBatcher {
   }
 }
 
-export function XTerminal({ sessionId, isActive, onReady }: Props) {
+export function XTerminal({ sessionId, isActive, onReady, sessionStatus }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const termRef = useRef<any>(null);
@@ -74,6 +76,12 @@ export function XTerminal({ sessionId, isActive, onReady }: Props) {
 
   const resizeMutation = trpc.session.resize.useMutation();
   const sendInputMutation = trpc.session.sendInput.useMutation();
+
+  // 종료된 세션의 스크롤백 복원 (running 세션은 실시간 출력으로 채워짐)
+  const scrollbackQuery = trpc.session.getScrollback.useQuery(
+    { sessionId },
+    { enabled: sessionStatus === 'stopped' || sessionStatus === 'error', retry: false }
+  );
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -106,26 +114,32 @@ export function XTerminal({ sessionId, isActive, onReady }: Props) {
         fontSize: 13,
         lineHeight: 1.2,
         theme: {
-          background: '#030712',
-          foreground: '#e5e7eb',
-          cursor: '#60a5fa',
-          selectionBackground: '#374151',
-          black: '#1f2937',
-          red: '#ef4444',
-          green: '#22c55e',
-          yellow: '#eab308',
-          blue: '#3b82f6',
-          magenta: '#a855f7',
-          cyan: '#06b6d4',
-          white: '#e5e7eb',
-          brightBlack: '#374151',
-          brightRed: '#f87171',
-          brightGreen: '#4ade80',
-          brightYellow: '#facc15',
-          brightBlue: '#60a5fa',
-          brightMagenta: '#c084fc',
-          brightCyan: '#22d3ee',
-          brightWhite: '#f9fafb',
+          // ── Warm Dark — Maestro 앱 팔레트 기반 ──────────────────────────
+          background:          '#0e0c0b', // --terminal-bg
+          foreground:          '#eae8e6', // --text-primary
+          cursor:              '#e07850', // --accent (오렌지)
+          cursorAccent:        '#0e0c0b',
+          selectionBackground: '#3d3330', // --bg-hover 계열 따뜻한 갈색
+
+          // ANSI normal (따뜻한 톤으로 재조율)
+          black:   '#1a1716', // --bg-secondary
+          red:     '#d95f49', // 따뜻한 적색
+          green:   '#6aab4a', // 올리브 그린
+          yellow:  '#c89a3a', // 앰버
+          blue:    '#5588c8', // 탁한 블루 (차갑지 않게)
+          magenta: '#a068c0', // 따뜻한 퍼플
+          cyan:    '#4da8a0', // 틸 (따뜻한 언더톤)
+          white:   '#c8c5c2', // --text-secondary 계열
+
+          // ANSI bright
+          brightBlack:   '#4a4542', // --text-muted 계열
+          brightRed:     '#f07058', // 액센트와 유사한 따뜻한 적색
+          brightGreen:   '#88c860',
+          brightYellow:  '#e8b848',
+          brightBlue:    '#70a0e0',
+          brightMagenta: '#c888e0',
+          brightCyan:    '#68c8c0',
+          brightWhite:   '#eae8e6', // --text-primary
         },
         cursorBlink: true,
         scrollback: 5000,
@@ -210,6 +224,16 @@ export function XTerminal({ sessionId, isActive, onReady }: Props) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId]);
+
+  // 종료 세션 scrollback 복원 — 데이터가 로드되고 terminal이 준비된 후 한 번만 write
+  useEffect(() => {
+    const data = scrollbackQuery.data;
+    if (!data || !termRef.current) return;
+    termRef.current.write(data);
+    // 복원 후 스크롤 최하단으로
+    requestAnimationFrame(() => termRef.current?.scrollToBottom());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scrollbackQuery.data]);
 
   // 탭 전환 시: 크기가 바뀐 경우에만 SIGWINCH, 항상 스크롤 최하단 + 포커스
   useEffect(() => {
