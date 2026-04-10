@@ -7,6 +7,8 @@ import type { Workspace } from '@maestro/shared-types';
 interface Props {
   repositoryId: string;
   onClose: () => void;
+  /** 완료 후 세션 생성 모달 열기 콜백 (선택) */
+  onCreated?: (workspace: Workspace) => void;
 }
 
 const inputStyle = {
@@ -15,20 +17,60 @@ const inputStyle = {
   borderColor: 'var(--border)',
 };
 
-export function CreateWorkspaceModal({ repositoryId, onClose }: Props) {
+// 생성 단계 정의
+type Step = 'idle' | 'worktree' | 'setup' | 'done';
+
+function StepIndicator({ step, label, current }: { step: Step; label: string; current: Step }) {
+  const steps: Step[] = ['worktree', 'setup', 'done'];
+  const currentIdx = steps.indexOf(current);
+  const stepIdx = steps.indexOf(step);
+  const isDone = currentIdx > stepIdx;
+  const isActive = current === step;
+  return (
+    <div className="flex items-center gap-2 text-xs">
+      <span
+        className="w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-bold flex-shrink-0"
+        style={{
+          backgroundColor: isDone ? '#22c55e' : isActive ? 'var(--accent)' : 'var(--bg-hover)',
+          color: isDone || isActive ? '#fff' : 'var(--text-muted)',
+        }}
+      >
+        {isDone ? '✓' : stepIdx + 1}
+      </span>
+      <span style={{ color: isActive ? 'var(--text-primary)' : isDone ? '#22c55e' : 'var(--text-muted)' }}>
+        {label}
+        {isActive && <span className="ml-1 animate-pulse">...</span>}
+      </span>
+    </div>
+  );
+}
+
+export function CreateWorkspaceModal({ repositoryId, onClose, onCreated }: Props) {
   const { addWorkspace } = useWorkspaceStore();
   const { repositories } = useRepositoryStore();
   const repo = repositories.find((r) => r.id === repositoryId);
 
   const [name, setName] = useState('');
   const [error, setError] = useState('');
+  const [step, setStep] = useState<Step>('idle');
+  const [createdWorkspace, setCreatedWorkspace] = useState<Workspace | null>(null);
 
   const createMutation = trpc.workspace.create.useMutation({
-    onSuccess: (workspace) => {
-      addWorkspace(workspace as Workspace);
-      onClose();
+    onMutate: () => {
+      setStep('worktree');
+      // 250ms 후 setup 단계로 전환 (시각적 피드백)
+      setTimeout(() => setStep('setup'), 250);
     },
-    onError: (e) => setError(e.message),
+    onSuccess: (workspace) => {
+      const ws = workspace as Workspace;
+      addWorkspace(ws);
+      setCreatedWorkspace(ws);
+      setStep('done');
+    },
+    onError: (e) => {
+      setStep('idle');
+      setError(e.message);
+    },
   });
 
   const handleCreate = () => {
@@ -95,29 +137,67 @@ export function CreateWorkspaceModal({ repositoryId, onClose }: Props) {
           )}
         </div>
 
+        {/* 생성 진행 상태 */}
+        {step !== 'idle' && (
+          <div
+            className="flex flex-col gap-2 px-3 py-3 rounded"
+            style={{ backgroundColor: 'var(--bg-secondary)' }}
+          >
+            <StepIndicator step="worktree" label="git worktree 생성" current={step} />
+            <StepIndicator step="setup" label="의존성 설치 (setup script)" current={step} />
+            <StepIndicator step="done" label="워크스페이스 준비 완료" current={step} />
+          </div>
+        )}
+
         {error && (
           <div className="text-xs text-red-400 bg-red-900/30 px-3 py-2 rounded">{error}</div>
         )}
 
-        <div className="flex gap-2 justify-end">
-          <button
-            onClick={onClose}
-            className="px-3 py-1.5 text-xs transition-colors"
-            style={{ color: 'var(--text-secondary)' }}
-            onMouseEnter={(e) => (e.currentTarget.style.color = 'var(--text-primary)')}
-            onMouseLeave={(e) => (e.currentTarget.style.color = 'var(--text-secondary)')}
-          >
-            Cancel
-          </button>
-          <button
-            onClick={handleCreate}
-            disabled={createMutation.isPending || !name.trim()}
-            className="px-4 py-1.5 text-xs text-white rounded transition-colors disabled:opacity-50"
-            style={{ backgroundColor: 'var(--accent)' }}
-          >
-            {createMutation.isPending ? 'Creating...' : 'Create Workspace'}
-          </button>
-        </div>
+        {step === 'done' ? (
+          <div className="flex gap-2 justify-end">
+            <button
+              onClick={onClose}
+              className="px-3 py-1.5 text-xs transition-colors"
+              style={{ color: 'var(--text-secondary)' }}
+              onMouseEnter={(e) => (e.currentTarget.style.color = 'var(--text-primary)')}
+              onMouseLeave={(e) => (e.currentTarget.style.color = 'var(--text-secondary)')}
+            >
+              Close
+            </button>
+            {onCreated && createdWorkspace && (
+              <button
+                onClick={() => {
+                  onCreated(createdWorkspace);
+                  onClose();
+                }}
+                className="px-4 py-1.5 text-xs text-white rounded transition-colors"
+                style={{ backgroundColor: 'var(--accent)' }}
+              >
+                Start Session Now
+              </button>
+            )}
+          </div>
+        ) : (
+          <div className="flex gap-2 justify-end">
+            <button
+              onClick={onClose}
+              className="px-3 py-1.5 text-xs transition-colors"
+              style={{ color: 'var(--text-secondary)' }}
+              onMouseEnter={(e) => (e.currentTarget.style.color = 'var(--text-primary)')}
+              onMouseLeave={(e) => (e.currentTarget.style.color = 'var(--text-secondary)')}
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleCreate}
+              disabled={step !== 'idle' || !name.trim()}
+              className="px-4 py-1.5 text-xs text-white rounded transition-colors disabled:opacity-50"
+              style={{ backgroundColor: 'var(--accent)' }}
+            >
+              {step !== 'idle' ? 'Creating...' : 'Create Workspace'}
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );
