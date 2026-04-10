@@ -4,6 +4,7 @@ import { GitDiffView } from './GitDiffView';
 import { CommitPanel } from './CommitPanel';
 import { MergePanel } from './MergePanel';
 import { PortsPanel } from './PortsPanel';
+import { ConfigPreview } from '../shared/ConfigPreview';
 import { useWorkspaceStore } from '../../store/workspaceStore';
 import { useSessionStore } from '../../store/sessionStore';
 
@@ -58,7 +59,12 @@ export function RightSidebar() {
             Select a workspace to view files
           </div>
         ) : rightPanelTab === 'files' ? (
-          <FileTree workspace={activeWorkspace} />
+          <div className="flex flex-col h-full overflow-y-auto">
+            <FileTree workspace={activeWorkspace} />
+            <div className="border-t flex-shrink-0" style={{ borderColor: 'var(--border)' }}>
+              <ConfigPreview worktreePath={activeWorkspace.worktreePath} />
+            </div>
+          </div>
         ) : rightPanelTab === 'git' ? (
           <GitDiffView workspace={activeWorkspace} />
         ) : rightPanelTab === 'merge' ? (

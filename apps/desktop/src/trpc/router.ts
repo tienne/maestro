@@ -9,6 +9,7 @@ import { initTRPC } from '@trpc/server';
 import { observable } from '@trpc/server/observable';
 import { z } from 'zod';
 import { v4 as uuidv4 } from 'uuid';
+import * as fs from 'fs';
 import * as path from 'path';
 import * as net from 'net';
 import { exec as execCb, execSync } from 'child_process';
@@ -1515,6 +1516,16 @@ export const shellRouter = router({
     .input(z.object({ filePath: z.string().min(1) }))
     .mutation(async ({ input }) => {
       await shell.openPath(input.filePath);
+    }),
+
+  readFile: publicProcedure
+    .input(z.object({ filePath: z.string().min(1) }))
+    .query(({ input }) => {
+      try {
+        return { content: fs.readFileSync(input.filePath, 'utf-8'), exists: true };
+      } catch {
+        return { content: '', exists: false };
+      }
     }),
 });
 

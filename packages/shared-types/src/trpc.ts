@@ -652,6 +652,12 @@ export const shellRouter = router({
   openPath: publicProcedure
     .input(z.object({ filePath: z.string().min(1) }))
     .mutation(async () => {}),
+
+  readFile: publicProcedure
+    .input(z.object({ filePath: z.string().min(1) }))
+    .query((): { content: string; exists: boolean } => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
 });
 
 export interface ProcessMetrics {
