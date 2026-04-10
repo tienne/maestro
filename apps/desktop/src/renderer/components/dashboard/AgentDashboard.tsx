@@ -1,6 +1,7 @@
 import { useSessionStore } from '../../store/sessionStore';
 import { useAgentStore } from '../../store/agentStore';
 import { useUiStore } from '../../store/uiStore';
+import { useResourceMetrics } from '../../hooks/useResourceMetrics';
 import type { SessionStatus } from '@maestro/shared-types';
 
 const STATUS_CONFIG: Record<SessionStatus, { label: string; color: string; dot: string }> = {
@@ -20,6 +21,7 @@ export function AgentDashboard() {
   const sessions = useSessionStore((s) => s.sessions);
   const agents = useAgentStore((s) => s.agents);
   const { setPaneSession } = useUiStore();
+  const metricsMap = useResourceMetrics();
 
   const agentMap = Object.fromEntries(agents.map((a) => [a.id, a]));
 
@@ -96,9 +98,22 @@ export function AgentDashboard() {
                 </div>
               </div>
 
-              {/* 에이전트 + 시간 */}
+              {/* 에이전트 + 메트릭 + 시간 */}
               <div className="flex items-center gap-2 text-[10px]" style={{ color: 'var(--text-muted)' }}>
                 {agent && <span>{agent.name}</span>}
+                {metricsMap[session.id] && (
+                  <>
+                    <span
+                      className="font-mono"
+                      style={{ color: metricsMap[session.id].cpu > 80 ? '#f14c4c' : 'var(--text-muted)' }}
+                    >
+                      CPU {metricsMap[session.id].cpu.toFixed(1)}%
+                    </span>
+                    <span className="font-mono">
+                      {(metricsMap[session.id].memory / 1024 / 1024).toFixed(0)}MB
+                    </span>
+                  </>
+                )}
                 <span className="ml-auto">{relTime}</span>
               </div>
             </button>

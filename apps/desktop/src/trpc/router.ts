@@ -1518,6 +1518,35 @@ export const shellRouter = router({
     }),
 });
 
+// ── resourceRouter ────────────────────────────────────────────────────────────
+
+export const resourceRouter = router({
+  /** 세션별 프로세스 메트릭 실시간 구독 (5초 주기) */
+  subscribe: publicProcedure
+    .subscription(() => {
+      const { getResourceMonitor } = require('../services/resource-monitor') as typeof import('../services/resource-monitor');
+      return observable<import('../services/resource-monitor').ProcessMetrics[]>((emit) => {
+        const unsub = getResourceMonitor().subscribe((metrics) => emit.next(metrics));
+        return unsub;
+      });
+    }),
+
+  /** 세션 PID 등록/해제 */
+  register: publicProcedure
+    .input(z.object({ sessionId: z.string(), pid: z.number().int().positive() }))
+    .mutation(({ input }) => {
+      const { getResourceMonitor } = require('../services/resource-monitor') as typeof import('../services/resource-monitor');
+      getResourceMonitor().register(input.sessionId, input.pid);
+    }),
+
+  unregister: publicProcedure
+    .input(z.object({ sessionId: z.string() }))
+    .mutation(({ input }) => {
+      const { getResourceMonitor } = require('../services/resource-monitor') as typeof import('../services/resource-monitor');
+      getResourceMonitor().unregister(input.sessionId);
+    }),
+});
+
 // ── appRouter (root) ──────────────────────────────────────────────────────────
 
 export const appRouter = router({
@@ -1533,6 +1562,7 @@ export const appRouter = router({
   layout: layoutRouter,
   dialog: dialogRouter,
   shell: shellRouter,
+  resource: resourceRouter,
 });
 
 export type AppRouter = typeof appRouter;

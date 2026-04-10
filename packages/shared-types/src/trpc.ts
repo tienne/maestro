@@ -654,6 +654,25 @@ export const shellRouter = router({
     .mutation(async () => {}),
 });
 
+export interface ProcessMetrics {
+  sessionId: string;
+  pid: number;
+  cpu: number;
+  memory: number;
+}
+
+export const resourceRouter = router({
+  subscribe: publicProcedure.subscription(() => {
+    throw new Error('Not implemented — use IPC handler');
+  }),
+  register: publicProcedure
+    .input(z.object({ sessionId: z.string(), pid: z.number().int().positive() }))
+    .mutation(async () => {}),
+  unregister: publicProcedure
+    .input(z.object({ sessionId: z.string() }))
+    .mutation(async () => {}),
+});
+
 export const appRouter = router({
   workspace: workspaceRouter,
   session: sessionRouter,
@@ -667,6 +686,7 @@ export const appRouter = router({
   dialog: dialogRouter,
   appState: appStateRouter,
   shell: shellRouter,
+  resource: resourceRouter,
 });
 
 // ── Type exports ──────────────────────────────────────────────────────────────
