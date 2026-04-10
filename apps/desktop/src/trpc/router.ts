@@ -13,11 +13,12 @@ import * as path from 'path';
 import * as net from 'net';
 import { exec as execCb, execSync } from 'child_process';
 import { promisify } from 'util';
-import { dialog, BrowserWindow } from 'electron';
+import { dialog, shell, BrowserWindow } from 'electron';
 import { getDatabaseManager } from '../db/database';
 import { getGitService } from '../services/git';
 import { getGitWatcher } from '../services/git-watcher';
 import { getPtyManager } from '../services/pty-manager';
+import { getListeningPorts } from '../services/port-scanner';
 import { getMainWindow } from '../main';
 import { getServerPort, getAuthToken } from '../services/http-server';
 import { createWrapper } from '../services/wrappers';
@@ -252,6 +253,61 @@ export const workspaceRouter = router({
       // 4. DB 레코드 삭제 (sessions는 CASCADE로 같이 삭제)
       db.prepare('DELETE FROM workspaces WHERE id = ?').run(input.id);
     }),
+
+  openInIde: publicProcedure
+    .input(z.object({
+      workspaceId: z.string(),
+      ide: z.enum(['vscode', 'cursor', 'webstorm', 'zed']),
+    }))
+    .mutation(async ({ input }): Promise<{ success: boolean; message: string }> => {
+      const db = getDatabaseManager().getDb();
+      const workspace = db
+        .prepare('SELECT * FROM workspaces WHERE id = ?')
+        .get(input.workspaceId) as Record<string, unknown> | undefined;
+
+      if (!workspace) {
+        throw new Error(`Workspace ${input.workspaceId} not found`);
+      }
+
+      const worktreePath = workspace.worktree_path as string;
+      const isMac = process.platform === 'darwin';
+      const isWin = process.platform === 'win32';
+
+      // IDE별 실행 커맨드 맵
+      const ideCommands: Record<string, { mac: string; win: string; linux: string }> = {
+        vscode: {
+          mac: `open -a "Visual Studio Code" "${worktreePath}"`,
+          win: `code "${worktreePath}"`,
+          linux: `code "${worktreePath}"`,
+        },
+        cursor: {
+          mac: `open -a "Cursor" "${worktreePath}"`,
+          win: `cursor "${worktreePath}"`,
+          linux: `cursor "${worktreePath}"`,
+        },
+        webstorm: {
+          mac: `open -a "WebStorm" "${worktreePath}"`,
+          win: `webstorm "${worktreePath}"`,
+          linux: `webstorm "${worktreePath}"`,
+        },
+        zed: {
+          mac: `open -a "Zed" "${worktreePath}"`,
+          win: `zed "${worktreePath}"`,
+          linux: `zed "${worktreePath}"`,
+        },
+      };
+
+      const commands = ideCommands[input.ide];
+      const command = isMac ? commands.mac : isWin ? commands.win : commands.linux;
+
+      try {
+        await execAsync(command);
+        return { success: true, message: `Opened in ${input.ide}` };
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        throw new Error(`Failed to open ${input.ide}: ${errMsg}`);
+      }
+    }),
 });
 
 // ── sessionRouter ─────────────────────────────────────────────────────────────
@@ -415,6 +471,17 @@ export const sessionRouter = router({
         ptyManager.removeExit(sid);
         const status = exitCode === 0 ? 'stopped' : 'error';
         db.prepare('UPDATE sessions SET status = ?, pid = NULL WHERE id = ?').run(status, sid);
+
+        // 스크롤백 버퍼 DB 저장 (세션 재개 시 복원)
+        const scrollback = ptyManager.getScrollback(sid);
+        if (scrollback) {
+          db.prepare(`
+            INSERT INTO session_scrollbacks (session_id, data, updated_at)
+            VALUES (?, ?, datetime('now'))
+            ON CONFLICT(session_id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at
+          `).run(sid, scrollback);
+        }
+
         const win = getMainWindow();
         if (win && !win.isDestroyed()) {
           win.webContents.send('session-status', { sessionId: sid, status });
@@ -603,6 +670,85 @@ export const sessionRouter = router({
         input.status,
         input.sessionId
       );
+    }),
+
+  getPorts: publicProcedure
+    .input(z.object({ sessionId: z.string() }))
+    .query(async ({ input }) => {
+      const db = getDatabaseManager().getDb();
+      const session = db
+        .prepare('SELECT * FROM sessions WHERE id = ?')
+        .get(input.sessionId) as SessionRow | undefined;
+
+      if (!session || !session.pid || session.status !== 'running') {
+        return [];
+      }
+
+      return getListeningPorts(session.pid);
+    }),
+
+  openPort: publicProcedure
+    .input(z.object({ port: z.number().int().min(1).max(65535) }))
+    .mutation(async ({ input }) => {
+      await shell.openExternal(`http://localhost:${input.port}`);
+    }),
+
+  getScrollback: publicProcedure
+    .input(z.object({ sessionId: z.string() }))
+    .query(({ input }) => {
+      const db = getDatabaseManager().getDb();
+      // 먼저 메모리 버퍼에서 확인 (현재 세션이 실행 중이면 최신 버퍼 반환)
+      const live = getPtyManager().getScrollback(input.sessionId);
+      if (live) return live;
+
+      // 메모리에 없으면 DB에서 조회 (이전에 종료된 세션)
+      const row = db
+        .prepare('SELECT data FROM session_scrollbacks WHERE session_id = ?')
+        .get(input.sessionId) as { data: string } | undefined;
+      return row?.data ?? '';
+    }),
+
+  broadcast: publicProcedure
+    .input(z.object({
+      sessionIds: z.array(z.string()).min(1),
+      text: z.string().min(1),
+    }))
+    .mutation(({ input }) => {
+      const ptyManager = getPtyManager();
+      const errors: string[] = [];
+      for (const sid of input.sessionIds) {
+        try {
+          ptyManager.write(sid, input.text + '\r');
+        } catch (err) {
+          errors.push(`${sid}: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+      if (errors.length > 0) {
+        throw new Error(`Broadcast partial failure: ${errors.join(', ')}`);
+      }
+    }),
+
+  savePrompt: publicProcedure
+    .input(z.object({ sessionId: z.string(), text: z.string().min(1) }))
+    .mutation(({ input }) => {
+      const db = getDatabaseManager().getDb();
+      const id = uuidv4();
+      db.prepare(
+        `INSERT INTO prompt_history (id, session_id, text) VALUES (?, ?, ?)`
+      ).run(id, input.sessionId, input.text);
+    }),
+
+  getPromptHistory: publicProcedure
+    .input(z.object({ sessionId: z.string(), limit: z.number().int().positive().max(100).default(50) }))
+    .query(({ input }) => {
+      const db = getDatabaseManager().getDb();
+      return (db
+        .prepare(
+          `SELECT id, text, created_at FROM prompt_history
+           WHERE session_id = ? ORDER BY created_at DESC LIMIT ?`
+        )
+        .all(input.sessionId, input.limit) as Array<{ id: string; text: string; created_at: string }>)
+        .reverse(); // 오래된 것이 앞에 오도록
     }),
 });
 
@@ -1026,6 +1172,97 @@ export const gitRouter = router({
     .input(z.object({ dirPath: z.string().min(1) }))
     .query(({ input }) => {
       return getGitService().readDir(input.dirPath);
+    }),
+
+  // worktree branch → base branch 병합
+  merge: publicProcedure
+    .input(z.object({
+      workspaceId: z.string().uuid(),
+      strategy: z.enum(['squash', 'rebase', 'merge']),
+    }))
+    .mutation(async ({ input }): Promise<{ success: boolean; message: string }> => {
+      const db = getDatabaseManager().getDb();
+
+      // 1. workspace 조회
+      const wsRow = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(input.workspaceId) as Record<string, unknown> | undefined;
+      if (!wsRow) {
+        return { success: false, message: 'Workspace not found' };
+      }
+      const workspace = rowToWorkspace(wsRow);
+
+      // 2. repository 조회 → baseBranch 확인
+      const repoRow = db.prepare('SELECT * FROM repositories WHERE id = ?').get(workspace.repositoryId) as Record<string, unknown> | undefined;
+      if (!repoRow) {
+        return { success: false, message: 'Repository not found' };
+      }
+      const repo = rowToRepo(repoRow);
+      const baseBranch = repo.baseBranch || 'main';
+
+      // 3. worktree 경로에서 simple-git 인스턴스 생성
+      const git = simpleGit(workspace.worktreePath);
+
+      // 4. uncommitted changes 확인
+      const statusResult = await git.status();
+      const hasUncommitted = statusResult.modified.length > 0
+        || statusResult.not_added.length > 0
+        || statusResult.staged.length > 0
+        || statusResult.deleted.length > 0
+        || statusResult.created.length > 0;
+
+      if (hasUncommitted) {
+        return { success: false, message: 'Uncommitted changes detected. Please commit or stash changes before merging.' };
+      }
+
+      // 5. 현재 브랜치 확인
+      const currentBranch = workspace.branch;
+      if (currentBranch === baseBranch) {
+        return { success: false, message: `Already on base branch (${baseBranch}). Nothing to merge.` };
+      }
+
+      try {
+        // 6. 메인 저장소 경로에서 병합 수행
+        const mainGit = simpleGit(repo.path);
+
+        // base branch로 checkout
+        await mainGit.checkout(baseBranch);
+
+        // 7. strategy에 따른 병합
+        switch (input.strategy) {
+          case 'squash': {
+            await mainGit.merge([currentBranch, '--squash']);
+            // squash merge 후 자동 커밋
+            await mainGit.commit(`Squash merge branch '${currentBranch}' into ${baseBranch}`);
+            break;
+          }
+          case 'rebase': {
+            // rebase: worktree 브랜치의 커밋들을 base 위에 리베이스
+            await mainGit.rebase([currentBranch]);
+            break;
+          }
+          case 'merge': {
+            await mainGit.merge([currentBranch, '--no-ff']);
+            break;
+          }
+        }
+
+        return {
+          success: true,
+          message: `Successfully merged '${currentBranch}' into '${baseBranch}' using ${input.strategy} strategy.`,
+        };
+      } catch (error) {
+        const errMsg = error instanceof Error ? error.message : String(error);
+
+        // 충돌 발생 시 merge 중단
+        try {
+          const mainGit = simpleGit(repo.path);
+          await mainGit.merge(['--abort']).catch(() => {});
+          await mainGit.rebase(['--abort']).catch(() => {});
+        } catch {
+          // abort 실패는 무시
+        }
+
+        return { success: false, message: `Merge failed: ${errMsg}` };
+      }
     }),
 });
 
