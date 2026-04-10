@@ -1508,6 +1508,16 @@ export const dialogRouter = router({
   }),
 });
 
+// ── shellRouter ───────────────────────────────────────────────────────────────
+
+export const shellRouter = router({
+  openPath: publicProcedure
+    .input(z.object({ filePath: z.string().min(1) }))
+    .mutation(async ({ input }) => {
+      await shell.openPath(input.filePath);
+    }),
+});
+
 // ── appRouter (root) ──────────────────────────────────────────────────────────
 
 export const appRouter = router({
@@ -1522,6 +1532,7 @@ export const appRouter = router({
   panes: panesRouter,
   layout: layoutRouter,
   dialog: dialogRouter,
+  shell: shellRouter,
 });
 
 export type AppRouter = typeof appRouter;

@@ -554,7 +554,7 @@ export const gitRouter = router({
 
   readDir: publicProcedure
     .input(z.object({ dirPath: z.string().min(1) }))
-    .query(() => {
+    .query((): Array<{ name: string; path: string; isDir: boolean }> => {
       throw new Error('Not implemented — use IPC handler');
     }),
 
@@ -648,6 +648,12 @@ export const appStateRouter = router({
   set: publicProcedure.input(z.object({ key: z.string(), value: z.unknown() })).mutation(async () => {}),
 });
 
+export const shellRouter = router({
+  openPath: publicProcedure
+    .input(z.object({ filePath: z.string().min(1) }))
+    .mutation(async () => {}),
+});
+
 export const appRouter = router({
   workspace: workspaceRouter,
   session: sessionRouter,
@@ -660,6 +666,7 @@ export const appRouter = router({
   mcp: mcpRouter,
   dialog: dialogRouter,
   appState: appStateRouter,
+  shell: shellRouter,
 });
 
 // ── Type exports ──────────────────────────────────────────────────────────────
