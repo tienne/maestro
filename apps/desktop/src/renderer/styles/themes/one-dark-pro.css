@@ -1,0 +1,28 @@
+/* One Dark Pro theme */
+:root[data-theme="one-dark-pro"] {
+  --bg-primary: #282c34;
+  --bg-secondary: #21252b;
+  --bg-panel: #2c313c;
+  --bg-hover: #3a3f4b;
+  --bg-active: #3e4452;
+
+  --text-primary: #abb2bf;
+  --text-secondary: #9da5b4;
+  --text-muted: #636d83;
+
+  --accent: #61afef;
+  --accent-hover: #528bff;
+
+  --border: #3e4452;
+  --border-subtle: #2c313c;
+
+  --tab-active-bg: #3e4452;
+  --tab-active-text: #abb2bf;
+  --tab-inactive-bg: #21252b;
+  --tab-inactive-text: #636d83;
+
+  --terminal-bg: #1b1d23;
+
+  --background: #282c34;
+  --foreground: #abb2bf;
+}

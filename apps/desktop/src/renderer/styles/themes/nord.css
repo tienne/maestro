@@ -1,0 +1,28 @@
+/* Nord theme */
+:root[data-theme="nord"] {
+  --bg-primary: #2e3440;
+  --bg-secondary: #3b4252;
+  --bg-panel: #434c5e;
+  --bg-hover: #4c566a;
+  --bg-active: #4c566a;
+
+  --text-primary: #eceff4;
+  --text-secondary: #d8dee9;
+  --text-muted: #7b88a1;
+
+  --accent: #88c0d0;
+  --accent-hover: #8fbcbb;
+
+  --border: #3b4252;
+  --border-subtle: #434c5e;
+
+  --tab-active-bg: #434c5e;
+  --tab-active-text: #eceff4;
+  --tab-inactive-bg: #3b4252;
+  --tab-inactive-text: #7b88a1;
+
+  --terminal-bg: #242933;
+
+  --background: #2e3440;
+  --foreground: #eceff4;
+}
