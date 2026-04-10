@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { trpc } from '../../lib/trpc';
+import { toast } from '../../lib/toast';
 import type { Workspace } from '@maestro/shared-types';
 
 interface Props {
@@ -15,8 +16,12 @@ export function CommitPanel({ workspace }: Props) {
     onSuccess: (output) => {
       setResult({ success: true, text: output as string });
       setMessage('');
+      toast.success('커밋 완료');
     },
-    onError: (e) => setResult({ success: false, text: e.message }),
+    onError: (e) => {
+      setResult({ success: false, text: e.message });
+      toast.error('커밋 실패', e.message);
+    },
   });
 
   const handleCommit = async () => {

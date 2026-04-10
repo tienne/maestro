@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useWorkspaceStore } from '../../store/workspaceStore';
 import { useRepositoryStore } from '../../store/repositoryStore';
 import { trpc } from '../../lib/trpc';
+import { toast } from '../../lib/toast';
 import type { Workspace } from '@maestro/shared-types';
 
 interface Props {
@@ -66,10 +67,12 @@ export function CreateWorkspaceModal({ repositoryId, onClose, onCreated }: Props
       addWorkspace(ws);
       setCreatedWorkspace(ws);
       setStep('done');
+      toast.success('워크스페이스 생성 완료', ws.name);
     },
     onError: (e) => {
       setStep('idle');
       setError(e.message);
+      toast.error('워크스페이스 생성 실패', e.message);
     },
   });
 

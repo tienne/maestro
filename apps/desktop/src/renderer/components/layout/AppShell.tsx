@@ -7,6 +7,8 @@ import { RepoSettingsPage } from '../repo-settings/RepoSettingsPage';
 import { SessionResumeModal } from '../modals/SessionResumeModal';
 import { useUiStore } from '../../store/uiStore';
 import { useLayoutStore } from '../../store/layoutStore';
+import { Toaster } from 'sonner';
+import { useTheme } from '../ThemeProvider';
 
 const MIN_SIDEBAR = 160;
 const MAX_SIDEBAR = 520;
@@ -15,6 +17,8 @@ export function AppShell() {
   useAppInit();
   useAutoSaveState();
   useAutoSaveLayout();
+
+  const { theme } = useTheme();
 
   const {
     sidebarWidth,
@@ -109,6 +113,15 @@ export function AppShell() {
           onClose={() => {}}
         />
       )}
+
+      {/* 전역 토스트 — 앱 테마와 동기화 */}
+      <Toaster
+        theme={theme}
+        position="bottom-right"
+        richColors
+        closeButton
+        toastOptions={{ duration: 4000 }}
+      />
     </div>
   );
 }

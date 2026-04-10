@@ -9,6 +9,7 @@ import { PromptInput } from './PromptInput';
 import { CreateSessionModal } from '../modals/CreateSessionModal';
 import { trpc } from '../../lib/trpc';
 import { sendToTerminal } from '../../hooks/useAppInit';
+import { toast } from '../../lib/toast';
 import type { Session } from '@maestro/shared-types';
 
 export function TerminalPanel() {
@@ -47,15 +48,22 @@ export function TerminalPanel() {
   };
 
   const launchMutation = trpc.session.launch.useMutation({
-    onSuccess: (session) => updateSession(session as Session),
+    onSuccess: (session) => {
+      updateSession(session as Session);
+      toast.success('세션 시작됨', (session as Session).name);
+    },
     onError: (err, vars) => {
       const msg = `\r\n\x1b[31m[Launch Error] ${err.message}\x1b[0m\r\n`;
       sendToTerminal(vars.sessionId, msg);
+      toast.error('세션 시작 실패', err.message);
     },
   });
 
   const deleteMutation = trpc.session.delete.useMutation({
-    onSuccess: (_, vars) => removeSession(vars.sessionId),
+    onSuccess: (_, vars) => {
+      removeSession(vars.sessionId);
+      toast.info('세션 종료됨');
+    },
   });
 
   const makeOnReady = useCallback(
