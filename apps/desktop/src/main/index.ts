@@ -4,6 +4,7 @@ import log from 'electron-log';
 import { is } from '@electron-toolkit/utils';
 import { startHttpServer, stopHttpServer, getAuthToken } from '../services/http-server';
 import { saveServerConfig, clearServerConfig } from '../services/config-store';
+import { setupAutoUpdater } from './auto-updater';
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -68,6 +69,7 @@ app.whenReady().then(async () => {
   }
 
   createWindow();
+  setupAutoUpdater();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {

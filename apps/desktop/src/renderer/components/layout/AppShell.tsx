@@ -9,6 +9,7 @@ import { useUiStore } from '../../store/uiStore';
 import { useLayoutStore } from '../../store/layoutStore';
 import { Toaster } from 'sonner';
 import { useTheme } from '../ThemeProvider';
+import { UpdateBanner } from '../UpdateBanner';
 
 const MIN_SIDEBAR = 160;
 const MAX_SIDEBAR = 520;
@@ -64,24 +65,28 @@ export function AppShell() {
   };
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden" style={{ backgroundColor: 'var(--bg-primary)' }}>
-      {/* Left Sidebar */}
-      <div
-        style={{ width: sidebarWidth, backgroundColor: 'var(--bg-secondary)' }}
-        className="flex-shrink-0 flex flex-col"
-      >
-        <LeftSidebar />
-      </div>
+    <div className="flex flex-col h-screen w-screen overflow-hidden" style={{ backgroundColor: 'var(--bg-primary)' }}>
+      <UpdateBanner />
 
-      {/* Left Resize Handle */}
-      <div
-        className="w-1 flex-shrink-0 cursor-col-resize transition-colors hover:bg-[var(--accent)]"
-        style={{ backgroundColor: 'var(--border)' }}
-        onMouseDown={handleLeftResizeMouseDown}
-      />
+      {/* 메인 레이아웃 (가로 3열) */}
+      <div className="flex flex-1 min-h-0 overflow-hidden">
+        {/* Left Sidebar */}
+        <div
+          style={{ width: sidebarWidth, backgroundColor: 'var(--bg-secondary)' }}
+          className="flex-shrink-0 flex flex-col"
+        >
+          <LeftSidebar />
+        </div>
 
-      {/* Main Content Area */}
-      <div className="flex-1 flex min-w-0 overflow-hidden">
+        {/* Left Resize Handle */}
+        <div
+          className="w-1 flex-shrink-0 cursor-col-resize transition-colors hover:bg-[var(--accent)]"
+          style={{ backgroundColor: 'var(--border)' }}
+          onMouseDown={handleLeftResizeMouseDown}
+        />
+
+        {/* Main Content Area */}
+        <div className="flex-1 flex min-w-0 overflow-hidden">
         {currentView === 'repoSettings' && settingsRepoId ? (
           <div className="flex-1 overflow-hidden" style={{ backgroundColor: 'var(--bg-primary)' }}>
             <RepoSettingsPage repositoryId={settingsRepoId} />
@@ -105,6 +110,7 @@ export function AppShell() {
             </div>
           </>
         )}
+        </div>
       </div>
 
       {pendingResumeSession && (
