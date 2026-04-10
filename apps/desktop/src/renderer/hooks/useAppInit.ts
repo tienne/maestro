@@ -38,10 +38,10 @@ export function registerOutputHandler(sessionId: string, handler: (data: string)
 export function useAppInit() {
   const { setRepositories } = useRepositoryStore();
   const { setWorkspaces } = useWorkspaceStore();
-  const { setSessions, updateStatus } = useSessionStore();
+  const { setSessions, updateStatus, updateSession, setActiveSession } = useSessionStore();
   const { setAgents } = useAgentStore();
   const { setServers } = useMcpStore();
-  const { setSidebarWidth, setRightSidebarWidth, setPendingResumeSession } = useUiStore();
+  const { setSidebarWidth, setRightSidebarWidth, setPaneSession, setCurrentView } = useUiStore();
 
   const utils = trpc.useUtils();
 
@@ -99,11 +99,22 @@ export function useAppInit() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [appStateQuery.data]);
 
+  const resumeMutation = trpc.session.resume.useMutation({
+    onSuccess: (resumed) => {
+      const sess = resumed as Session;
+      updateSession(sess);
+      setActiveSession(sess.id);
+      setPaneSession(0, sess.id);
+      setCurrentView('terminal');
+    },
+  });
+  const resumedRef = useRef(false);
+
   useEffect(() => {
     const d = lastSessionQuery.data as unknown;
-    if (d) {
-      setPendingResumeSession(d as Session);
-    }
+    if (!d || resumedRef.current) return;
+    resumedRef.current = true;
+    resumeMutation.mutate({ sessionId: (d as Session).id, restart: true });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [lastSessionQuery.data]);
 
@@ -172,12 +183,78 @@ export function useAppInit() {
       },
     );
 
+    // M5-04: 환경변수 변경 알림 — 활성 세션에 envReloadNeeded 플래그 설정
+    const unlistenEnvReload = window.electronAPI.onEvent(
+      'env-reload-needed',
+      (payload: unknown) => {
+        const { sessionId } = payload as { sessionId: string };
+        useSessionStore.getState().setEnvReloadNeeded(sessionId, true);
+      },
+    );
+
+    // M6-05: Relay 연결 상태 업데이트
+    const unlistenRelayStatus = window.electronAPI.onEvent(
+      'relay-status',
+      (payload: unknown) => {
+        const { status, latencyMs } = payload as { status: string; latencyMs?: number };
+        const { setRelayStatus } = useUiStore.getState();
+        setRelayStatus(status as Parameters<typeof setRelayStatus>[0]);
+      },
+    );
+
+    // M9-01: 윈도우 번호 수신
+    const unlistenWindowNumber = window.electronAPI.onEvent(
+      'window:number',
+      (_payload: unknown) => {
+        // 윈도우 번호는 TitleBar에서 표시 용도 — 상태 저장 없이 DOM 직접 업데이트 가능
+        // 현재 구현에서는 수신만 하고 기록
+      },
+    );
+
+    // M5-03: Lifecycle hook 결과 알림 — 터미널에 인포 메시지 표시
+    const unlistenHookResult = window.electronAPI.onEvent(
+      'hook-result',
+      (payload: unknown) => {
+        const { sessionId, hook, success, error } = payload as {
+          sessionId: string; hook: string; success: boolean; error?: string;
+        };
+        const msg = success
+          ? `\r\n\x1b[36m[Hook: ${hook}] completed successfully\x1b[0m\r\n`
+          : `\r\n\x1b[31m[Hook: ${hook}] failed: ${error ?? 'unknown'}\x1b[0m\r\n`;
+        const handlers = outputHandlers.get(sessionId) ?? [];
+        handlers.forEach((h) => h(msg));
+      },
+    );
+
+    // M7-04: renderer 전역 에러를 main process에 전달 → 파일 로그
+    const handleWindowError = (event: ErrorEvent) => {
+      window.electronAPI?.reportError?.(
+        'window.onerror',
+        event.message,
+        event.error?.stack,
+      );
+    };
+    const handleUnhandledRejection = (event: PromiseRejectionEvent) => {
+      const reason = event.reason;
+      const message = reason instanceof Error ? reason.message : String(reason);
+      const stack = reason instanceof Error ? reason.stack : undefined;
+      window.electronAPI?.reportError?.('unhandledRejection', message, stack);
+    };
+    window.addEventListener('error', handleWindowError);
+    window.addEventListener('unhandledrejection', handleUnhandledRejection);
+
     return () => {
       unlistenOutput();
       unlistenStatus();
       unlistenFocus();
       unlistenSidebar();
       unlistenTabs();
+      unlistenEnvReload();
+      unlistenRelayStatus();
+      unlistenWindowNumber();
+      unlistenHookResult();
+      window.removeEventListener('error', handleWindowError);
+      window.removeEventListener('unhandledrejection', handleUnhandledRejection);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -259,8 +336,12 @@ declare global {
   interface Window {
     electronAPI?: {
       invoke: (channel: string, args?: Record<string, unknown>) => Promise<unknown>;
+      /** Fire-and-forget IPC */
+      send?: (channel: string, args?: unknown) => void;
       onEvent: (channel: string, handler: (payload: unknown) => void) => () => void;
       offEvent: (channel: string) => void;
+      /** M7-04: renderer 에러를 main process에 전달 */
+      reportError?: (source: string, message: string, stack?: string) => void;
     };
   }
 }

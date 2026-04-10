@@ -3,7 +3,7 @@ import { useWorkspaceStore } from '../../store/workspaceStore';
 import { useRepositoryStore } from '../../store/repositoryStore';
 import { trpc } from '../../lib/trpc';
 import { toast } from '../../lib/toast';
-import type { Workspace } from '@maestro/shared-types';
+import type { Workspace, WorkspaceTemplate } from '@maestro/shared-types';
 
 interface Props {
   repositoryId: string;
@@ -55,6 +55,12 @@ export function CreateWorkspaceModal({ repositoryId, onClose, onCreated }: Props
   const [error, setError] = useState('');
   const [step, setStep] = useState<Step>('idle');
   const [createdWorkspace, setCreatedWorkspace] = useState<Workspace | null>(null);
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
+
+  const templateQuery = trpc.template.list.useQuery();
+  const applyTemplateMutation = trpc.template.applyToWorkspace.useMutation();
+
+  const templates = (templateQuery.data ?? []) as WorkspaceTemplate[];
 
   const createMutation = trpc.workspace.create.useMutation({
     onMutate: () => {
@@ -62,10 +68,20 @@ export function CreateWorkspaceModal({ repositoryId, onClose, onCreated }: Props
       // 250ms 후 setup 단계로 전환 (시각적 피드백)
       setTimeout(() => setStep('setup'), 250);
     },
-    onSuccess: (workspace) => {
+    onSuccess: async (workspace) => {
       const ws = workspace as Workspace;
       addWorkspace(ws);
       setCreatedWorkspace(ws);
+
+      // M5-01: 선택된 템플릿이 있으면 적용
+      if (selectedTemplateId) {
+        try {
+          await applyTemplateMutation.mutateAsync({ templateId: selectedTemplateId, workspaceId: ws.id });
+        } catch {
+          // 템플릿 적용 실패는 워크스페이스 생성 자체를 막지 않음
+        }
+      }
+
       setStep('done');
       toast.success('워크스페이스 생성 완료', ws.name);
     },
@@ -89,7 +105,7 @@ export function CreateWorkspaceModal({ repositoryId, onClose, onCreated }: Props
     : name || '...';
 
   return (
-    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50" onClick={onClose}>
+    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50" onClick={onClose} role="dialog" aria-modal="true" aria-label="워크스페이스 생성">
       <div
         className="rounded-lg w-[400px] p-5 flex flex-col gap-4 border"
         style={{ backgroundColor: 'var(--bg-panel)', borderColor: 'var(--border)' }}
@@ -114,6 +130,42 @@ export function CreateWorkspaceModal({ repositoryId, onClose, onCreated }: Props
             style={{ backgroundColor: 'var(--bg-secondary)', color: 'var(--text-muted)' }}
           >
             Repository: <span style={{ color: 'var(--text-secondary)' }}>{repo.name}</span>
+          </div>
+        )}
+
+        {/* M5-01: From Template */}
+        {templates.length > 0 && (
+          <div className="flex flex-col gap-1">
+            <label className="text-xs" style={{ color: 'var(--text-muted)' }}>From Template</label>
+            <div className="flex flex-wrap gap-1.5">
+              <button
+                onClick={() => setSelectedTemplateId(null)}
+                className="text-[10px] px-2 py-1 rounded transition-colors"
+                style={{
+                  backgroundColor: selectedTemplateId === null ? 'var(--accent)' : 'var(--bg-secondary)',
+                  color: selectedTemplateId === null ? '#fff' : 'var(--text-secondary)',
+                  border: '1px solid',
+                  borderColor: selectedTemplateId === null ? 'var(--accent)' : 'var(--border)',
+                }}
+              >
+                None
+              </button>
+              {templates.map((tpl) => (
+                <button
+                  key={tpl.id}
+                  onClick={() => setSelectedTemplateId(tpl.id)}
+                  className="text-[10px] px-2 py-1 rounded transition-colors"
+                  style={{
+                    backgroundColor: selectedTemplateId === tpl.id ? 'var(--accent)' : 'var(--bg-secondary)',
+                    color: selectedTemplateId === tpl.id ? '#fff' : 'var(--text-secondary)',
+                    border: '1px solid',
+                    borderColor: selectedTemplateId === tpl.id ? 'var(--accent)' : 'var(--border)',
+                  }}
+                >
+                  {tpl.name}
+                </button>
+              ))}
+            </div>
           </div>
         )}
 
