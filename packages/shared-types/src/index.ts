@@ -187,6 +187,39 @@ export interface WorkspaceWithHooks extends Workspace {
   hookOnError: string;
 }
 
+// ── AI Agent Editor: Project & Task ──────────────────────────────────────────
+
+export type ProjectTaskStatus = 'pending' | 'in_progress' | 'completed' | 'cancelled';
+export type ProjectTaskPriority = 'critical' | 'high' | 'medium' | 'low';
+export type ProjectTaskCreatedBy = 'human' | 'agent';
+
+export interface Project {
+  id: string;
+  name: string;
+  description?: string;
+  repositoryId?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface ProjectTask {
+  id: string;
+  projectId: string;
+  parentTaskId?: string;
+  title: string;
+  prd?: string;
+  spec?: string;
+  referenceFiles?: string[];
+  acceptanceCriteria?: string;
+  priority: ProjectTaskPriority;
+  assignedAgentId?: string;
+  status: ProjectTaskStatus;
+  createdBy: ProjectTaskCreatedBy;
+  workspaceId?: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
 // IDE deep-linking types
 export type IdeType = 'vscode' | 'cursor' | 'webstorm' | 'zed';
 

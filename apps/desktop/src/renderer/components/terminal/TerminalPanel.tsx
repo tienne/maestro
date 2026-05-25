@@ -33,8 +33,22 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 
-export function TerminalPanel() {
-  const { sessions, activeSessionId, setActiveSession, removeSession, updateSession } = useSessionStore();
+interface TerminalPanelProps {
+  /**
+   * AI Agent Editor에서 선택된 태스크의 워크스페이스 ID.
+   * 설정되면 해당 워크스페이스의 세션만 탭으로 표시한다.
+   * undefined/null이면 기존 동작(전체 세션 표시)을 유지한다.
+   */
+  taskWorkspaceId?: string | null;
+  /**
+   * AI Agent Editor에서 선택된 태스크 ID.
+   * 세션이 없을 때 [실행] 버튼에서 projectTask.run을 호출하는 데 사용한다.
+   */
+  taskId?: string | null;
+}
+
+export function TerminalPanel({ taskWorkspaceId, taskId }: TerminalPanelProps = {}) {
+  const { sessions, activeSessionId, setActiveSession, removeSession, updateSession, addSession } = useSessionStore();
   const { splitLayout, setSplitLayout, panes, setPaneSession, activePaneIndex, setActivePaneIndex, pinnedTabs, tabOrder, setTabOrder, openFileTabs, activeFileTabPath, setActiveFileTabPath, closeFileTab } = useUiStore();
   const { servers, setServers } = useMcpStore();
   const { workspaces } = useWorkspaceStore();
@@ -82,6 +96,27 @@ export function TerminalPanel() {
 
     return [...sortByFav(pinned), ...sortByFav(unpinned)];
   }, [sessions, pinnedTabs, tabOrder]);
+
+  // AI Agent Editor 모드: 선택된 태스크의 워크스페이스 세션만 탭에 표시
+  // xterm.js 인스턴스는 모두 마운트 유지 (visibility:hidden) — 탭 표시만 필터링
+  const visibleSessions = taskWorkspaceId
+    ? sortedSessions.filter((s) => s.workspaceId === taskWorkspaceId)
+    : sortedSessions;
+
+  // 태스크 모드에서 세션이 없을 때 사용할 run mutation
+  const utils = trpc.useUtils();
+  const runTaskMutation = trpc.projectTask.run.useMutation({
+    onSuccess: ({ workspace, session }) => {
+      // 워크스페이스를 store에 반영 (workspaceStore는 여기서 import 하지 않고
+      // invalidate로 처리해 store 동기화는 기존 훅에 위임)
+      utils.workspace.list.invalidate();
+      // 새 세션을 sessionStore에 추가해 탭이 즉시 나타나게 한다
+      addSession(session as Session);
+    },
+    onError: (err) => {
+      toast.error('태스크 실행 실패', err.message);
+    },
+  });
 
   // DnD 끝: 순서 저장
   const handleDragEnd = useCallback((event: DragEndEvent) => {
@@ -206,9 +241,9 @@ export function TerminalPanel() {
         }}
       >
         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-          <SortableContext items={sortedSessions.map((s) => s.id)} strategy={horizontalListSortingStrategy}>
+          <SortableContext items={visibleSessions.map((s) => s.id)} strategy={horizontalListSortingStrategy}>
             <div className="flex items-center flex-1 gap-0 overflow-x-auto" role="tablist" aria-label="세션 탭">
-              {sortedSessions.map((session) => (
+              {visibleSessions.map((session) => (
                 <SortableTab
                   key={session.id}
                   session={session}
@@ -257,7 +292,30 @@ export function TerminalPanel() {
               })}
 
               {/* 탭바 내 세션 추가 버튼 */}
-              {activeWorkspace && (
+              {/* 태스크 모드: projectTask.run 재호출 / 일반 모드: CreateSessionModal */}
+              {taskWorkspaceId && taskId ? (
+                <Tooltip content="새 세션 추가" shortcut="⌘N">
+                  <button
+                    onClick={() => runTaskMutation.mutate({ taskId })}
+                    disabled={runTaskMutation.isPending}
+                    className="flex items-center justify-center w-8 h-full flex-shrink-0 text-lg leading-none transition-colors disabled:opacity-40"
+                    style={{ color: 'var(--text-muted)' }}
+                    onMouseEnter={(e) => {
+                      if (!runTaskMutation.isPending) {
+                        e.currentTarget.style.color = 'var(--text-primary)';
+                        e.currentTarget.style.backgroundColor = 'var(--bg-hover)';
+                      }
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.color = 'var(--text-muted)';
+                      e.currentTarget.style.backgroundColor = 'transparent';
+                    }}
+                    aria-label="새 세션"
+                  >
+                    +
+                  </button>
+                </Tooltip>
+              ) : activeWorkspace ? (
                 <Tooltip content="새 세션" shortcut="⌘N">
                   <button
                     onClick={() => setShowCreateSession(true)}
@@ -276,7 +334,7 @@ export function TerminalPanel() {
                     +
                   </button>
                 </Tooltip>
-              )}
+              ) : null}
             </div>
           </SortableContext>
         </DndContext>
@@ -361,33 +419,46 @@ export function TerminalPanel() {
             className="flex-1 overflow-hidden relative"
             onClick={() => setActivePaneIndex(0)}
           >
-            {sessions.length === 0 ? (
+            {/* 태스크 모드에서 해당 워크스페이스의 세션이 없으면 빈 상태 표시 */}
+            {taskWorkspaceId && visibleSessions.length === 0 ? (
+              <TaskEmptyTerminal
+                taskId={taskId ?? null}
+                isRunning={runTaskMutation.isPending}
+                onRun={() => taskId && runTaskMutation.mutate({ taskId })}
+              />
+            ) : sessions.length === 0 ? (
               <EmptyTerminal />
             ) : (
-              sessions.map((session) => (
-                <div
-                  key={session.id}
-                  className="absolute inset-0 flex flex-col"
-                  style={{
-                    // display:none 대신 visibility:hidden 사용.
-                    // display:none은 컨테이너 치수를 0으로 만들어 ResizeObserver가
-                    // fitAddon.fit()을 cols=0으로 호출 → 터미널 버퍼 오염.
-                    // visibility:hidden은 치수를 유지하므로 이 문제가 없다.
-                    visibility: session.id === activeSessionId ? 'visible' : 'hidden',
-                    pointerEvents: session.id === activeSessionId ? 'auto' : 'none',
-                  }}
-                >
-                  <EnvReloadBanner sessionId={session.id} />
-                  <div className="flex-1 relative">
-                    <XTerminal
-                      sessionId={session.id}
-                      isActive={session.id === activeSessionId}
-                      sessionStatus={session.status}
-                      onReady={session.status === 'pending' ? makeOnReady(session.id) : undefined}
-                    />
+              sessions.map((session) => {
+                // 태스크 모드: 다른 워크스페이스 세션은 visibility:hidden으로 마운트 유지
+                // (기존 xterm.js 상태 보존) + 탭에는 표시 안 됨
+                const isVisibleTab = !taskWorkspaceId || session.workspaceId === taskWorkspaceId;
+                const isActive = session.id === activeSessionId && isVisibleTab;
+                return (
+                  <div
+                    key={session.id}
+                    className="absolute inset-0 flex flex-col"
+                    style={{
+                      // display:none 대신 visibility:hidden 사용.
+                      // display:none은 컨테이너 치수를 0으로 만들어 ResizeObserver가
+                      // fitAddon.fit()을 cols=0으로 호출 → 터미널 버퍼 오염.
+                      // visibility:hidden은 치수를 유지하므로 이 문제가 없다.
+                      visibility: isActive ? 'visible' : 'hidden',
+                      pointerEvents: isActive ? 'auto' : 'none',
+                    }}
+                  >
+                    <EnvReloadBanner sessionId={session.id} />
+                    <div className="flex-1 relative">
+                      <XTerminal
+                        sessionId={session.id}
+                        isActive={isActive}
+                        sessionStatus={session.status}
+                        onReady={session.status === 'pending' ? makeOnReady(session.id) : undefined}
+                      />
+                    </div>
                   </div>
-                </div>
-              ))
+                );
+              })
             )}
           </div>
         ) : splitLayout === 'vertical' ? (
@@ -555,6 +626,44 @@ function EmptyTerminal() {
         title="에이전트 세션을 시작해보세요"
         description="워크스페이스를 선택하고 새 세션을 생성하세요"
       />
+    </div>
+  );
+}
+
+/**
+ * TaskEmptyTerminal — AI Agent Editor 모드에서 태스크에 세션이 없을 때 표시하는 빈 상태.
+ * [실행] 버튼을 누르면 projectTask.run을 호출해 워크스페이스 + 세션을 자동 생성한다.
+ */
+function TaskEmptyTerminal({
+  taskId,
+  isRunning,
+  onRun,
+}: {
+  taskId: string | null;
+  isRunning: boolean;
+  onRun: () => void;
+}) {
+  return (
+    <div className="h-full flex flex-col items-center justify-center gap-4">
+      <EmptyState
+        icon="⚡"
+        title="실행 중인 세션이 없습니다"
+        description="이 태스크에 연결된 에이전트 세션이 없습니다"
+      />
+      {taskId && (
+        <button
+          onClick={onRun}
+          disabled={isRunning}
+          className="flex items-center gap-2 px-4 py-2 rounded text-sm font-medium transition-colors disabled:opacity-50"
+          style={{
+            backgroundColor: isRunning ? 'var(--bg-hover)' : 'rgba(129,140,248,0.2)',
+            color: isRunning ? 'var(--text-muted)' : '#818cf8',
+            border: `1px solid ${isRunning ? 'var(--border)' : 'rgba(129,140,248,0.4)'}`,
+          }}
+        >
+          <span>{isRunning ? '실행 중...' : '▶ 실행'}</span>
+        </button>
+      )}
     </div>
   );
 }

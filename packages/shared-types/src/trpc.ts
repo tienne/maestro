@@ -10,7 +10,7 @@
 
 import { initTRPC } from '@trpc/server';
 import { z } from 'zod';
-import type { Workspace, Repository, Agent, Session, SessionCostSummary, TaskItem, ErrorInfo, SessionIntelligence, AgentPreset, SessionLabel, WorkspaceTemplate, WorkspaceSnapshot, WorkspaceWithHooks, Webhook, WebhookLog, ApiKey, PluginInfo, ArchiveSearchResult, CustomTheme, SettingsProfile } from './index';
+import type { Workspace, Repository, Agent, Session, SessionCostSummary, TaskItem, ErrorInfo, SessionIntelligence, AgentPreset, SessionLabel, WorkspaceTemplate, WorkspaceSnapshot, WorkspaceWithHooks, Webhook, WebhookLog, ApiKey, PluginInfo, ArchiveSearchResult, CustomTheme, SettingsProfile, Project, ProjectTask } from './index';
 
 // ── tRPC instance ─────────────────────────────────────────────────────────────
 
@@ -1146,6 +1146,129 @@ export const fileRouter = router({
     }),
 });
 
+// ── AI Agent Editor: Project & Task Schemas ──────────────────────────────────
+
+export const CreateProjectSchema = z.object({
+  name: z.string().min(1),
+  description: z.string().optional(),
+  repositoryId: z.string().optional(),
+});
+
+export const UpdateProjectSchema = z.object({
+  name: z.string().min(1).optional(),
+  description: z.string().optional(),
+  repositoryId: z.string().optional(),
+});
+
+export const CreateTaskSchema_AI = z.object({
+  projectId: z.string(),
+  parentTaskId: z.string().optional(),
+  title: z.string().min(1),
+  prd: z.string().optional(),
+  spec: z.string().optional(),
+  referenceFiles: z.array(z.string()).optional(),
+  acceptanceCriteria: z.string().optional(),
+  priority: z.enum(['critical', 'high', 'medium', 'low']).default('medium'),
+  assignedAgentId: z.string().optional(),
+  createdBy: z.enum(['human', 'agent']).default('human'),
+});
+
+export const UpdateTaskSchema_AI = z.object({
+  title: z.string().min(1).optional(),
+  prd: z.string().optional(),
+  spec: z.string().optional(),
+  referenceFiles: z.array(z.string()).optional(),
+  acceptanceCriteria: z.string().optional(),
+  priority: z.enum(['critical', 'high', 'medium', 'low']).optional(),
+  assignedAgentId: z.string().optional(),
+  status: z.enum(['pending', 'in_progress', 'completed', 'cancelled']).optional(),
+  workspaceId: z.string().optional(),
+});
+
+// ── AI Agent Editor: projectRouter ──────────────────────────────────────────
+
+export const projectRouter = router({
+  list: publicProcedure.query((): Project[] => {
+    throw new Error('Not implemented — use IPC handler');
+  }),
+
+  get: publicProcedure
+    .input(z.object({ id: z.string() }))
+    .query((): Project | null => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
+
+  create: publicProcedure
+    .input(CreateProjectSchema)
+    .mutation((): Project => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
+
+  update: publicProcedure
+    .input(z.object({ id: z.string(), data: UpdateProjectSchema }))
+    .mutation((): Project => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
+
+  delete: publicProcedure
+    .input(z.object({ id: z.string() }))
+    .mutation((): void => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
+});
+
+// ── AI Agent Editor: taskRouter ──────────────────────────────────────────────
+
+export const projectTaskRouter = router({
+  list: publicProcedure
+    .input(z.object({ projectId: z.string() }))
+    .query((): ProjectTask[] => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
+
+  listChildren: publicProcedure
+    .input(z.object({ parentTaskId: z.string() }))
+    .query((): ProjectTask[] => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
+
+  get: publicProcedure
+    .input(z.object({ id: z.string() }))
+    .query((): ProjectTask | null => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
+
+  create: publicProcedure
+    .input(CreateTaskSchema_AI)
+    .mutation((): ProjectTask => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
+
+  update: publicProcedure
+    .input(z.object({ id: z.string(), data: UpdateTaskSchema_AI }))
+    .mutation((): ProjectTask => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
+
+  delete: publicProcedure
+    .input(z.object({ id: z.string() }))
+    .mutation((): void => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
+
+  // Task 실행: workspace 자동 생성 + PTY 세션 생성
+  run: publicProcedure
+    .input(z.object({
+      taskId: z.string(),
+      agentId: z.string().optional(),
+      cols: z.number().int().positive().default(220),
+      rows: z.number().int().positive().default(50),
+    }))
+    .mutation((): { workspace: Workspace; session: Session } => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
+});
+
 // ── M6-02: webhookRouter ────────────────────────────────────────────────────
 
 export const webhookRouter = router({
@@ -1302,6 +1425,8 @@ export const appRouter = router({
   plugin: pluginRouter,
   profile: profileRouter,
   theme: themeRouter,
+  project: projectRouter,
+  projectTask: projectTaskRouter,
 });
 
 // ── Type exports ──────────────────────────────────────────────────────────────
@@ -1326,3 +1451,5 @@ export type RelayRouter = typeof relayRouter;
 export type PluginRouter = typeof pluginRouter;
 export type ProfileRouter = typeof profileRouter;
 export type ThemeRouter = typeof themeRouter;
+export type ProjectRouter = typeof projectRouter;
+export type ProjectTaskRouter = typeof projectTaskRouter;

@@ -7,6 +7,7 @@ import { trpc } from '../../lib/trpc';
 import { AddRepositoryModal } from '../modals/AddRepositoryModal';
 import { CreateWorkspaceModal } from '../modals/CreateWorkspaceModal';
 import { AgentDashboard } from '../dashboard/AgentDashboard';
+import { ProjectTree } from './ProjectTree';
 import { EmptyState } from '../shared/EmptyState';
 import { Tooltip } from '../shared/Tooltip';
 import { ContextMenu, type ContextMenuEntry } from './ContextMenu';
@@ -28,7 +29,7 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import type { Workspace, Repository, IdeType } from '@maestro/shared-types';
 
-type LeftTab = 'repos' | 'dashboard';
+type LeftTab = 'repos' | 'projects' | 'dashboard';
 
 const IDE_OPTIONS: { id: IdeType; label: string; shortLabel: string }[] = [
   { id: 'vscode', label: 'VS Code', shortLabel: 'VS' },
@@ -235,9 +236,9 @@ export function LeftSidebar() {
         )}
       </div>
 
-      {/* Tabs: Repos | Dashboard */}
+      {/* Tabs: Repos | Projects | Dashboard */}
       <div className="flex flex-shrink-0 border-b" style={{ borderColor: 'var(--border)' }} role="tablist" aria-label="사이드바 탭">
-        {([['repos', 'Repos'], ['dashboard', 'Agents']] as [LeftTab, string][]).map(([tab, label]) => (
+        {([['repos', 'Repos'], ['projects', 'Tasks'], ['dashboard', 'Agents']] as [LeftTab, string][]).map(([tab, label]) => (
           <button
             key={tab}
             onClick={() => setLeftTab(tab)}
@@ -258,6 +259,13 @@ export function LeftSidebar() {
       {leftTab === 'dashboard' && (
         <div className="flex-1 overflow-hidden min-h-0">
           <AgentDashboard />
+        </div>
+      )}
+
+      {/* Projects tab */}
+      {leftTab === 'projects' && (
+        <div className="flex-1 overflow-hidden min-h-0 flex flex-col">
+          <ProjectTree />
         </div>
       )}
 

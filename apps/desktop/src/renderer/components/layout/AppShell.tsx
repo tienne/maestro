@@ -4,12 +4,11 @@ import { useAppHotkeys } from '../../hooks/useAppHotkeys';
 import { useDeepLink } from '../../hooks/useDeepLink';
 import { useSessionSounds } from '../../hooks/useSessionSounds';
 import { LeftSidebar } from '../sidebar/LeftSidebar';
-import { TerminalPanel } from '../terminal/TerminalPanel';
+import { CenterPanel } from './CenterPanel';
 import { CommandPalette } from '../modals/CommandPalette';
 import { ShortcutsModal } from '../modals/ShortcutsModal';
 import { OnboardingWizard } from '../onboarding/OnboardingWizard';
 import { useUiStore } from '../../store/uiStore';
-import { useLayoutStore } from '../../store/layoutStore';
 import { useSettingsStore } from '../../store/settingsStore';
 import { useRepositoryStore } from '../../store/repositoryStore';
 import { UpdateBanner } from '../UpdateBanner';
@@ -18,7 +17,6 @@ import { ErrorBoundary } from 'react-error-boundary';
 import { ErrorFallback } from '../ErrorFallback';
 
 // M7-05: 무거운 컴포넌트들 lazy import
-const TiledLayout = lazy(() => import('./TiledLayout').then((m) => ({ default: m.TiledLayout })));
 const RightSidebar = lazy(() => import('../git-panel/RightSidebar').then((m) => ({ default: m.RightSidebar })));
 const SettingsPage = lazy(() => import('../settings/SettingsPage').then((m) => ({ default: m.SettingsPage })));
 
@@ -95,9 +93,6 @@ export function AppShell() {
     setRightSidebarWidth,
   } = useUiStore();
 
-  const { mosaicState } = useLayoutStore();
-  const isMosaicMode = mosaicState !== null;
-
   const handleLeftResizeMouseDown = (e: React.MouseEvent) => {
     e.preventDefault();
     const startX = e.clientX;
@@ -165,15 +160,7 @@ export function AppShell() {
         ) : (
           <>
             <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
-              <ErrorBoundary FallbackComponent={(props) => <ErrorFallback {...props} panelName="터미널" />}>
-                {isMosaicMode ? (
-                  <Suspense fallback={<LazyFallback />}>
-                    <TiledLayout />
-                  </Suspense>
-                ) : (
-                  <TerminalPanel />
-                )}
-              </ErrorBoundary>
+              <CenterPanel />
             </div>
             {/* Right Resize Handle */}
             <div

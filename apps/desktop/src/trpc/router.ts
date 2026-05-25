@@ -25,7 +25,10 @@ import { getMainWindow } from '../main';
 import { getServerPort, getAuthToken } from '../services/http-server';
 import { createWrapper } from '../services/wrappers';
 import type { WrapperHookConfig } from '../services/agent-wrapper';
-import type { Workspace, Agent, Repository, EnvVar, AppState } from '@maestro/shared-types';
+import { selectAgentForTask } from '../services/orchestrator';
+import { teamsWatcher } from '../services/teams-watcher';
+import { attachSubagentHandler } from '../services/subagent-handler';
+import type { Workspace, Agent, Repository, EnvVar, AppState, Project, ProjectTask } from '@maestro/shared-types';
 import { simpleGit } from 'simple-git';
 
 const execAsync = promisify(execCb);
@@ -761,7 +764,20 @@ export const sessionRouter = router({
           });
       }
 
+      // M11: Task 기반 세션인 경우 서브에이전트 spawn 핸들러 연결
+      if (workspace.task_id) {
+        const taskRow = db
+          .prepare('SELECT project_id FROM tasks WHERE id = ?')
+          .get(workspace.task_id as string) as { project_id: string } | undefined;
+        if (taskRow) {
+          attachSubagentHandler(sessionId, workspace.task_id as string, taskRow.project_id);
+        }
+      }
+
       ptyManager.onOutput(sessionId, (sid, data) => {
+        // Teams: 서브에이전트 spawn 감지
+        teamsWatcher.processOutput(sid, data);
+
         // M3: PTY 출력을 인텔리전스 매니저에 전달
         intelligence.feedData(sid, data);
 
@@ -789,6 +805,9 @@ export const sessionRouter = router({
       ptyManager.onExit(sessionId, (sid, exitCode) => {
         ptyManager.removeOutput(sid);
         ptyManager.removeExit(sid);
+
+        // Teams: 세션 종료 시 감지 해제
+        teamsWatcher.detachFromSession(sid);
 
         // M3: 완료 감지
         intelligence.handleExit(sid, exitCode);
@@ -1049,6 +1068,9 @@ export const sessionRouter = router({
 
       if (ptyManager.isAlive(sessionId)) {
         ptyManager.onOutput(sessionId, (sid, data) => {
+          // Teams: 서브에이전트 spawn 감지 (resume 시에도 유지)
+          teamsWatcher.processOutput(sid, data);
+
           const win = getMainWindow();
           if (win && !win.isDestroyed()) {
             win.webContents.send('session-output', { sessionId: sid, data });
@@ -3392,6 +3414,443 @@ export const themeRouter = router({
   }),
 });
 
+// ── AI Agent Editor: projectRouter ────────────────────────────────────────────
+
+export const projectRouter = router({
+  list: publicProcedure.query((): Project[] => {
+    const db = getDatabaseManager().getDb();
+    const rows = db
+      .prepare('SELECT * FROM projects ORDER BY created_at DESC')
+      .all() as Array<Record<string, unknown>>;
+    return rows.map((r) => ({
+      id: r.id as string,
+      name: r.name as string,
+      description: (r.description as string) ?? undefined,
+      repositoryId: (r.repository_id as string) ?? undefined,
+      createdAt: r.created_at as number,
+      updatedAt: r.updated_at as number,
+    }));
+  }),
+
+  get: publicProcedure
+    .input(z.object({ id: z.string() }))
+    .query(({ input }: { input: any }): Project | null => {
+      const db = getDatabaseManager().getDb();
+      const row = db
+        .prepare('SELECT * FROM projects WHERE id = ?')
+        .get(input.id) as Record<string, unknown> | undefined;
+      if (!row) return null;
+      return {
+        id: row.id as string,
+        name: row.name as string,
+        description: (row.description as string) ?? undefined,
+        repositoryId: (row.repository_id as string) ?? undefined,
+        createdAt: row.created_at as number,
+        updatedAt: row.updated_at as number,
+      };
+    }),
+
+  create: publicProcedure
+    .input(z.object({
+      name: z.string().min(1),
+      description: z.string().optional(),
+      repositoryId: z.string().optional(),
+    }))
+    .mutation(({ input }: { input: any }): Project => {
+      const db = getDatabaseManager().getDb();
+      const id = uuidv4();
+      const now = Date.now();
+      db.prepare(
+        'INSERT INTO projects (id, name, description, repository_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
+      ).run(id, input.name, input.description ?? null, input.repositoryId ?? null, now, now);
+      return {
+        id,
+        name: input.name,
+        description: input.description,
+        repositoryId: input.repositoryId,
+        createdAt: now,
+        updatedAt: now,
+      };
+    }),
+
+  update: publicProcedure
+    .input(z.object({
+      id: z.string(),
+      data: z.object({
+        name: z.string().min(1).optional(),
+        description: z.string().optional(),
+        repositoryId: z.string().optional(),
+      }),
+    }))
+    .mutation(({ input }: { input: any }): Project => {
+      const db = getDatabaseManager().getDb();
+      const now = Date.now();
+
+      const existing = db
+        .prepare('SELECT * FROM projects WHERE id = ?')
+        .get(input.id) as Record<string, unknown> | undefined;
+      if (!existing) throw new Error(`Project not found: ${input.id}`);
+
+      const fields: string[] = ['updated_at = ?'];
+      const values: unknown[] = [now];
+
+      if (input.data.name !== undefined) { fields.push('name = ?'); values.push(input.data.name); }
+      if (input.data.description !== undefined) { fields.push('description = ?'); values.push(input.data.description); }
+      if (input.data.repositoryId !== undefined) { fields.push('repository_id = ?'); values.push(input.data.repositoryId); }
+
+      values.push(input.id);
+      db.prepare(`UPDATE projects SET ${fields.join(', ')} WHERE id = ?`).run(...values);
+
+      const updated = db
+        .prepare('SELECT * FROM projects WHERE id = ?')
+        .get(input.id) as Record<string, unknown>;
+      return {
+        id: updated.id as string,
+        name: updated.name as string,
+        description: (updated.description as string) ?? undefined,
+        repositoryId: (updated.repository_id as string) ?? undefined,
+        createdAt: updated.created_at as number,
+        updatedAt: updated.updated_at as number,
+      };
+    }),
+
+  delete: publicProcedure
+    .input(z.object({ id: z.string() }))
+    .mutation(({ input }: { input: any }): void => {
+      const db = getDatabaseManager().getDb();
+      db.prepare('DELETE FROM projects WHERE id = ?').run(input.id);
+    }),
+});
+
+// ── AI Agent Editor: projectTaskRouter ────────────────────────────────────────
+
+export const projectTaskRouter = router({
+  list: publicProcedure
+    .input(z.object({ projectId: z.string() }))
+    .query(({ input }: { input: any }): ProjectTask[] => {
+      const db = getDatabaseManager().getDb();
+      const rows = db
+        .prepare('SELECT * FROM tasks WHERE project_id = ? ORDER BY created_at ASC')
+        .all(input.projectId) as Array<Record<string, unknown>>;
+      return rows.map((r) => ({
+        id: r.id as string,
+        projectId: r.project_id as string,
+        parentTaskId: (r.parent_task_id as string) ?? undefined,
+        title: r.title as string,
+        prd: (r.prd as string) ?? undefined,
+        spec: (r.spec as string) ?? undefined,
+        referenceFiles: r.reference_files
+          ? (JSON.parse(r.reference_files as string) as string[])
+          : undefined,
+        acceptanceCriteria: (r.acceptance_criteria as string) ?? undefined,
+        priority: r.priority as ProjectTask['priority'],
+        assignedAgentId: (r.assigned_agent_id as string) ?? undefined,
+        status: r.status as ProjectTask['status'],
+        createdBy: r.created_by as ProjectTask['createdBy'],
+        workspaceId: (r.workspace_id as string) ?? undefined,
+        createdAt: r.created_at as number,
+        updatedAt: r.updated_at as number,
+      }));
+    }),
+
+  listChildren: publicProcedure
+    .input(z.object({ parentTaskId: z.string() }))
+    .query(({ input }: { input: any }): ProjectTask[] => {
+      const db = getDatabaseManager().getDb();
+      const rows = db
+        .prepare('SELECT * FROM tasks WHERE parent_task_id = ? ORDER BY created_at ASC')
+        .all(input.parentTaskId) as Array<Record<string, unknown>>;
+      return rows.map((r) => ({
+        id: r.id as string,
+        projectId: r.project_id as string,
+        parentTaskId: (r.parent_task_id as string) ?? undefined,
+        title: r.title as string,
+        prd: (r.prd as string) ?? undefined,
+        spec: (r.spec as string) ?? undefined,
+        referenceFiles: r.reference_files
+          ? (JSON.parse(r.reference_files as string) as string[])
+          : undefined,
+        acceptanceCriteria: (r.acceptance_criteria as string) ?? undefined,
+        priority: r.priority as ProjectTask['priority'],
+        assignedAgentId: (r.assigned_agent_id as string) ?? undefined,
+        status: r.status as ProjectTask['status'],
+        createdBy: r.created_by as ProjectTask['createdBy'],
+        workspaceId: (r.workspace_id as string) ?? undefined,
+        createdAt: r.created_at as number,
+        updatedAt: r.updated_at as number,
+      }));
+    }),
+
+  get: publicProcedure
+    .input(z.object({ id: z.string() }))
+    .query(({ input }: { input: any }): ProjectTask | null => {
+      const db = getDatabaseManager().getDb();
+      const r = db
+        .prepare('SELECT * FROM tasks WHERE id = ?')
+        .get(input.id) as Record<string, unknown> | undefined;
+      if (!r) return null;
+      return {
+        id: r.id as string,
+        projectId: r.project_id as string,
+        parentTaskId: (r.parent_task_id as string) ?? undefined,
+        title: r.title as string,
+        prd: (r.prd as string) ?? undefined,
+        spec: (r.spec as string) ?? undefined,
+        referenceFiles: r.reference_files
+          ? (JSON.parse(r.reference_files as string) as string[])
+          : undefined,
+        acceptanceCriteria: (r.acceptance_criteria as string) ?? undefined,
+        priority: r.priority as ProjectTask['priority'],
+        assignedAgentId: (r.assigned_agent_id as string) ?? undefined,
+        status: r.status as ProjectTask['status'],
+        createdBy: r.created_by as ProjectTask['createdBy'],
+        workspaceId: (r.workspace_id as string) ?? undefined,
+        createdAt: r.created_at as number,
+        updatedAt: r.updated_at as number,
+      };
+    }),
+
+  create: publicProcedure
+    .input(z.object({
+      projectId: z.string(),
+      parentTaskId: z.string().optional(),
+      title: z.string().min(1),
+      prd: z.string().optional(),
+      spec: z.string().optional(),
+      referenceFiles: z.array(z.string()).optional(),
+      acceptanceCriteria: z.string().optional(),
+      priority: z.enum(['critical', 'high', 'medium', 'low']).default('medium'),
+      assignedAgentId: z.string().optional(),
+      createdBy: z.enum(['human', 'agent']).default('human'),
+    }))
+    .mutation(({ input }: { input: any }): ProjectTask => {
+      const db = getDatabaseManager().getDb();
+      const id = uuidv4();
+      const now = Date.now();
+      const refFiles = input.referenceFiles ? JSON.stringify(input.referenceFiles) : null;
+      db.prepare(
+        `INSERT INTO tasks (id, project_id, parent_task_id, title, prd, spec, reference_files, acceptance_criteria, priority, assigned_agent_id, status, created_by, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`
+      ).run(
+        id, input.projectId, input.parentTaskId ?? null, input.title,
+        input.prd ?? null, input.spec ?? null, refFiles,
+        input.acceptanceCriteria ?? null, input.priority,
+        input.assignedAgentId ?? null, input.createdBy, now, now,
+      );
+      return {
+        id,
+        projectId: input.projectId,
+        parentTaskId: input.parentTaskId,
+        title: input.title,
+        prd: input.prd,
+        spec: input.spec,
+        referenceFiles: input.referenceFiles,
+        acceptanceCriteria: input.acceptanceCriteria,
+        priority: input.priority,
+        assignedAgentId: input.assignedAgentId,
+        status: 'pending',
+        createdBy: input.createdBy,
+        createdAt: now,
+        updatedAt: now,
+      };
+    }),
+
+  update: publicProcedure
+    .input(z.object({
+      id: z.string(),
+      data: z.object({
+        title: z.string().min(1).optional(),
+        prd: z.string().optional(),
+        spec: z.string().optional(),
+        referenceFiles: z.array(z.string()).optional(),
+        acceptanceCriteria: z.string().optional(),
+        priority: z.enum(['critical', 'high', 'medium', 'low']).optional(),
+        assignedAgentId: z.string().optional(),
+        status: z.enum(['pending', 'in_progress', 'completed', 'cancelled']).optional(),
+        workspaceId: z.string().optional(),
+      }),
+    }))
+    .mutation(({ input }: { input: any }): ProjectTask => {
+      const db = getDatabaseManager().getDb();
+      const now = Date.now();
+
+      const existing = db
+        .prepare('SELECT * FROM tasks WHERE id = ?')
+        .get(input.id) as Record<string, unknown> | undefined;
+      if (!existing) throw new Error(`Task not found: ${input.id}`);
+
+      const fields: string[] = ['updated_at = ?'];
+      const values: unknown[] = [now];
+
+      if (input.data.title !== undefined) { fields.push('title = ?'); values.push(input.data.title); }
+      if (input.data.prd !== undefined) { fields.push('prd = ?'); values.push(input.data.prd); }
+      if (input.data.spec !== undefined) { fields.push('spec = ?'); values.push(input.data.spec); }
+      if (input.data.referenceFiles !== undefined) { fields.push('reference_files = ?'); values.push(JSON.stringify(input.data.referenceFiles)); }
+      if (input.data.acceptanceCriteria !== undefined) { fields.push('acceptance_criteria = ?'); values.push(input.data.acceptanceCriteria); }
+      if (input.data.priority !== undefined) { fields.push('priority = ?'); values.push(input.data.priority); }
+      if (input.data.assignedAgentId !== undefined) { fields.push('assigned_agent_id = ?'); values.push(input.data.assignedAgentId); }
+      if (input.data.status !== undefined) { fields.push('status = ?'); values.push(input.data.status); }
+      if (input.data.workspaceId !== undefined) { fields.push('workspace_id = ?'); values.push(input.data.workspaceId); }
+
+      values.push(input.id);
+      db.prepare(`UPDATE tasks SET ${fields.join(', ')} WHERE id = ?`).run(...values);
+
+      const updated = db
+        .prepare('SELECT * FROM tasks WHERE id = ?')
+        .get(input.id) as Record<string, unknown>;
+      return {
+        id: updated.id as string,
+        projectId: updated.project_id as string,
+        parentTaskId: (updated.parent_task_id as string) ?? undefined,
+        title: updated.title as string,
+        prd: (updated.prd as string) ?? undefined,
+        spec: (updated.spec as string) ?? undefined,
+        referenceFiles: updated.reference_files
+          ? (JSON.parse(updated.reference_files as string) as string[])
+          : undefined,
+        acceptanceCriteria: (updated.acceptance_criteria as string) ?? undefined,
+        priority: updated.priority as ProjectTask['priority'],
+        assignedAgentId: (updated.assigned_agent_id as string) ?? undefined,
+        status: updated.status as ProjectTask['status'],
+        createdBy: updated.created_by as ProjectTask['createdBy'],
+        workspaceId: (updated.workspace_id as string) ?? undefined,
+        createdAt: updated.created_at as number,
+        updatedAt: updated.updated_at as number,
+      };
+    }),
+
+  delete: publicProcedure
+    .input(z.object({ id: z.string() }))
+    .mutation(({ input }: { input: any }): void => {
+      const db = getDatabaseManager().getDb();
+      db.prepare('DELETE FROM tasks WHERE id = ?').run(input.id);
+    }),
+
+  // Task 실행: workspace 자동 생성 + PTY 세션 생성
+  run: publicProcedure
+    .input(z.object({
+      taskId: z.string(),
+      agentId: z.string().optional(),
+      cols: z.number().int().positive().default(220),
+      rows: z.number().int().positive().default(50),
+    }))
+    .mutation(async ({ input }: { input: any }) => {
+      const db = getDatabaseManager().getDb();
+      const git = getGitService();
+      const { taskId } = input;
+
+      // 1. 태스크 조회
+      const task = db
+        .prepare('SELECT * FROM tasks WHERE id = ?')
+        .get(taskId) as Record<string, unknown> | undefined;
+      if (!task) throw new Error(`Task not found: ${taskId}`);
+
+      let workspace: Record<string, unknown>;
+
+      // 2. task.workspace_id가 있으면 기존 워크스페이스 사용
+      if (task.workspace_id) {
+        const existing = db
+          .prepare('SELECT * FROM workspaces WHERE id = ?')
+          .get(task.workspace_id as string) as Record<string, unknown> | undefined;
+        if (!existing) throw new Error(`Workspace ${task.workspace_id} not found`);
+        workspace = existing;
+      } else {
+        // 3. 새 워크스페이스 생성 — project의 repository_id로 레포 조회
+        const project = db
+          .prepare('SELECT * FROM projects WHERE id = ?')
+          .get(task.project_id as string) as Record<string, unknown> | undefined;
+        if (!project) throw new Error(`Project not found: ${task.project_id}`);
+        if (!project.repository_id) throw new Error(`Project has no repository linked: ${task.project_id}`);
+
+        const repo = db
+          .prepare('SELECT * FROM repositories WHERE id = ?')
+          .get(project.repository_id as string) as Record<string, unknown> | undefined;
+        if (!repo) throw new Error(`Repository ${project.repository_id} not found`);
+
+        const repoPath = repo.path as string;
+        const branchPrefix = (repo.branch_prefix as string) || '';
+        const worktreeBase =
+          (repo.worktree_base_path as string) || path.join(repoPath, '..', 'worktrees');
+        const workspaceName = `task-${taskId.slice(0, 8)}`;
+        const branch = `${branchPrefix}${workspaceName}`;
+        const worktreePath = path.join(worktreeBase, workspaceName);
+        const workspaceId = uuidv4();
+
+        // git worktree 생성 (기존 workspace.create 패턴 재활용)
+        await git.addWorktree(repoPath, worktreePath, branch);
+
+        // setup_script 실행
+        const setupScript = repo.setup_script as string;
+        if (setupScript?.trim()) {
+          try {
+            await execAsync(setupScript, { cwd: worktreePath });
+          } catch (err) {
+            await git.removeWorktree(repoPath, worktreePath);
+            throw new Error(`Setup script failed: ${String(err)}`);
+          }
+        }
+
+        // DB INSERT — workspaces 테이블
+        db.prepare(
+          `INSERT INTO workspaces (id, name, repository_id, branch, worktree_path, task_id) VALUES (?, ?, ?, ?, ?, ?)`
+        ).run(workspaceId, workspaceName, project.repository_id as string, branch, worktreePath, taskId);
+
+        const inserted = db
+          .prepare('SELECT * FROM workspaces WHERE id = ?')
+          .get(workspaceId) as Record<string, unknown> | undefined;
+        if (!inserted) {
+          await git.removeWorktree(repoPath, worktreePath);
+          throw new Error('Failed to insert workspace record');
+        }
+
+        // tasks 테이블에 workspace_id 연결
+        db.prepare('UPDATE tasks SET workspace_id = ?, updated_at = ? WHERE id = ?')
+          .run(workspaceId, Date.now(), taskId);
+
+        workspace = inserted;
+      }
+
+      // 4. 에이전트 결정: input.agentId > task.assigned_agent_id > 첫 번째 에이전트
+      const resolvedAgentId = selectAgentForTask(
+        db,
+        {
+          assignedAgentId: task.assigned_agent_id as string | null,
+          title: task.title as string,
+          prd: task.prd as string | null,
+        },
+        input.agentId,
+      );
+      if (!resolvedAgentId) throw new Error('No agents configured. Please add an agent first.');
+      const agentId = resolvedAgentId;
+
+      const agent = db
+        .prepare('SELECT * FROM agents WHERE id = ?')
+        .get(agentId) as Record<string, unknown> | undefined;
+      if (!agent) throw new Error(`Agent ${agentId} not found`);
+
+      // 5. PTY 세션 생성 (기존 session.create 패턴 재활용)
+      const sessionId = uuidv4();
+      const sessionName = `${task.title as string} — run`;
+      db.prepare(
+        `INSERT INTO sessions (id, name, workspace_id, agent_id, status, pid, depends_on_session_id, context_source_session_id)
+         VALUES (?, ?, ?, ?, 'pending', NULL, NULL, NULL)`
+      ).run(sessionId, sessionName, workspace.id as string, agentId);
+
+      const sessionRow = db
+        .prepare('SELECT * FROM sessions WHERE id = ?')
+        .get(sessionId) as SessionRow;
+
+      // tasks 상태를 in_progress로 업데이트
+      db.prepare('UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?')
+        .run('in_progress', Date.now(), taskId);
+
+      return {
+        workspace: rowToWorkspace(workspace),
+        session: rowToSession(sessionRow),
+      };
+    }),
+});
+
 // ── appRouter (root) ──────────────────────────────────────────────────────────
 
 export const appRouter = router({
@@ -3418,6 +3877,8 @@ export const appRouter = router({
   plugin: pluginRouter,
   profile: profileRouter,
   theme: themeRouter,
+  project: projectRouter,
+  projectTask: projectTaskRouter,
 });
 
 export type AppRouter = typeof appRouter;

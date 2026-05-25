@@ -125,6 +125,7 @@ export class DatabaseManager {
     this.migrateM7Performance();
     this.migrateM9Sharing();
     this.migrateM10Plugins();
+    this.migrateM11AgentEditor();
   }
 
   /** M2-06: sessions 테이블에 is_favorite 컬럼 추가 (기존 DB 마이그레이션) */
@@ -396,6 +397,52 @@ export class DatabaseManager {
     }
     if (!cols.some((c) => c.name === 'script_content')) {
       this.db.exec(`ALTER TABLE agents ADD COLUMN script_content TEXT`);
+    }
+  }
+
+  /** M11: AI Agent Editor — projects, tasks 테이블 생성 + workspaces.task_id 컬럼 추가 */
+  private migrateM11AgentEditor(): void {
+    // projects 테이블
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS projects (
+        id            TEXT PRIMARY KEY,
+        name          TEXT NOT NULL,
+        description   TEXT,
+        repository_id TEXT REFERENCES repositories(id) ON DELETE SET NULL,
+        created_at    INTEGER NOT NULL,
+        updated_at    INTEGER NOT NULL
+      );
+    `);
+
+    // tasks 테이블
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS tasks (
+        id                  TEXT PRIMARY KEY,
+        project_id          TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        parent_task_id      TEXT REFERENCES tasks(id) ON DELETE SET NULL,
+        title               TEXT NOT NULL,
+        prd                 TEXT,
+        spec                TEXT,
+        reference_files     TEXT,
+        acceptance_criteria TEXT,
+        priority            TEXT NOT NULL DEFAULT 'medium',
+        assigned_agent_id   TEXT,
+        status              TEXT NOT NULL DEFAULT 'pending',
+        created_by          TEXT NOT NULL DEFAULT 'human',
+        workspace_id        TEXT,
+        created_at          INTEGER NOT NULL,
+        updated_at          INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_id);
+      CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(project_id, status);
+    `);
+
+    // workspaces 테이블에 task_id 컬럼 추가
+    const wsCols = this.db
+      .prepare(`PRAGMA table_info(workspaces)`)
+      .all() as Array<{ name: string }>;
+    if (!wsCols.some((c) => c.name === 'task_id')) {
+      this.db.exec(`ALTER TABLE workspaces ADD COLUMN task_id TEXT REFERENCES tasks(id) ON DELETE SET NULL`);
     }
   }
 
