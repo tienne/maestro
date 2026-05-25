@@ -21,7 +21,7 @@ export function registerAllHandlers(): void {
   registerAgentHandlers(db);
   registerGitHandlers(git);
   registerMcpHandlers(db);
-  registerAppStateHandlers(db);
+  registerAppStateHandlers();
   registerDialogHandlers();
 }
 

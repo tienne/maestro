@@ -1,24 +1,31 @@
 import { ipcMain } from 'electron';
 import { v4 as uuidv4 } from 'uuid';
+import { eq, desc, asc } from 'drizzle-orm';
 import type { DatabaseManager } from '../db/database';
+import * as schema from '../db/schema';
 import type { Agent } from '@maestro/shared-types';
 
-function rowToAgent(row: Record<string, unknown>): Agent {
+function rowToAgent(row: schema.Agent): Agent {
   return {
-    id: row.id as string,
-    name: row.name as string,
-    command: row.command as string,
-    args: JSON.parse(row.args as string) as string[],
-    env: JSON.parse(row.env as string) as Record<string, string>,
-    isBuiltIn: Boolean(row.is_built_in),
+    id: row.id,
+    name: row.name,
+    command: row.command,
+    args: JSON.parse(row.args) as string[],
+    env: JSON.parse(row.env) as Record<string, string>,
+    isBuiltIn: Boolean(row.isBuiltIn),
   };
 }
 
 export function registerAgentHandlers(db: DatabaseManager): void {
-  const database = db.getDb();
+  const drizzle = db.drizzle;
 
   ipcMain.handle('agent:list', () => {
-    return database.prepare('SELECT * FROM agents ORDER BY is_built_in DESC, name').all().map((r) => rowToAgent(r as Record<string, unknown>));
+    return drizzle
+      .select()
+      .from(schema.agents)
+      .orderBy(desc(schema.agents.isBuiltIn), asc(schema.agents.name))
+      .all()
+      .map(rowToAgent);
   });
 
   ipcMain.handle(
@@ -28,13 +35,21 @@ export function registerAgentHandlers(db: DatabaseManager): void {
       args: { name: string; command: string; args: string[]; env: Record<string, string> }
     ) => {
       const id = uuidv4();
-      database
-        .prepare(
-          `INSERT INTO agents (id, name, command, args, env, is_built_in) VALUES (?, ?, ?, ?, ?, 0)`
-        )
-        .run(id, args.name, args.command, JSON.stringify(args.args), JSON.stringify(args.env));
+      drizzle.insert(schema.agents).values({
+        id,
+        name: args.name,
+        command: args.command,
+        args: JSON.stringify(args.args),
+        env: JSON.stringify(args.env),
+        isBuiltIn: false,
+      }).run();
 
-      return rowToAgent(database.prepare('SELECT * FROM agents WHERE id = ?').get(id) as Record<string, unknown>);
+      const [inserted] = drizzle
+        .select()
+        .from(schema.agents)
+        .where(eq(schema.agents.id, id))
+        .all();
+      return rowToAgent(inserted);
     }
   );
 
@@ -44,31 +59,44 @@ export function registerAgentHandlers(db: DatabaseManager): void {
       _event,
       args: { id: string; name: string; command: string; args: string[]; env: Record<string, string> }
     ) => {
-      const agent = database
-        .prepare('SELECT is_built_in FROM agents WHERE id = ?')
-        .get(args.id) as { is_built_in: number } | undefined;
+      const [agent] = drizzle
+        .select({ isBuiltIn: schema.agents.isBuiltIn })
+        .from(schema.agents)
+        .where(eq(schema.agents.id, args.id))
+        .all();
 
       if (!agent) throw new Error(`Agent ${args.id} not found`);
-      if (agent.is_built_in) throw new Error('Cannot modify built-in agents');
+      if (agent.isBuiltIn) throw new Error('Cannot modify built-in agents');
 
-      database
-        .prepare(
-          `UPDATE agents SET name = ?, command = ?, args = ?, env = ? WHERE id = ?`
-        )
-        .run(args.name, args.command, JSON.stringify(args.args), JSON.stringify(args.env), args.id);
+      drizzle.update(schema.agents)
+        .set({
+          name: args.name,
+          command: args.command,
+          args: JSON.stringify(args.args),
+          env: JSON.stringify(args.env),
+        })
+        .where(eq(schema.agents.id, args.id))
+        .run();
 
-      return rowToAgent(database.prepare('SELECT * FROM agents WHERE id = ?').get(args.id) as Record<string, unknown>);
+      const [updated] = drizzle
+        .select()
+        .from(schema.agents)
+        .where(eq(schema.agents.id, args.id))
+        .all();
+      return rowToAgent(updated);
     }
   );
 
   ipcMain.handle('agent:delete', (_event, args: { id: string }) => {
-    const agent = database
-      .prepare('SELECT is_built_in FROM agents WHERE id = ?')
-      .get(args.id) as { is_built_in: number } | undefined;
+    const [agent] = drizzle
+      .select({ isBuiltIn: schema.agents.isBuiltIn })
+      .from(schema.agents)
+      .where(eq(schema.agents.id, args.id))
+      .all();
 
     if (!agent) throw new Error(`Agent ${args.id} not found`);
-    if (agent.is_built_in) throw new Error('Cannot delete built-in agents');
+    if (agent.isBuiltIn) throw new Error('Cannot delete built-in agents');
 
-    database.prepare('DELETE FROM agents WHERE id = ?').run(args.id);
+    drizzle.delete(schema.agents).where(eq(schema.agents.id, args.id)).run();
   });
 }

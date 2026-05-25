@@ -10,6 +10,7 @@ import { v4 as uuidv4 } from 'uuid';
 import log from 'electron-log';
 import { teamsWatcher } from './teams-watcher';
 import { getDatabaseManager } from '../db/database';
+import * as schema from '../db/schema';
 import { getMainWindow } from '../main';
 
 export interface SubagentTaskCreatedPayload {
@@ -36,16 +37,22 @@ export function attachSubagentHandler(
 ): void {
   teamsWatcher.attachToSession(sessionId, (sid, info) => {
     try {
-      const db = getDatabaseManager().getDb();
+      const drizzle = getDatabaseManager().drizzle;
       const now = Date.now();
       const childTaskId = uuidv4();
       const title = info.taskDescription || 'Sub-task';
 
-      db.prepare(
-        `INSERT INTO tasks
-           (id, project_id, parent_task_id, title, status, created_by, priority, created_at, updated_at)
-         VALUES (?, ?, ?, ?, 'pending', 'agent', 'medium', ?, ?)`
-      ).run(childTaskId, projectId, parentTaskId, title, now, now);
+      drizzle.insert(schema.tasks).values({
+        id: childTaskId,
+        projectId,
+        parentTaskId,
+        title,
+        status: 'pending',
+        createdBy: 'agent',
+        priority: 'medium',
+        createdAt: now,
+        updatedAt: now,
+      }).run();
 
       log.info(`[SubagentHandler] Child task created: ${childTaskId} (parent: ${parentTaskId})`);
 

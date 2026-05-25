@@ -48,6 +48,57 @@
       "createdAt": "2026-04-12T11:01:50.461Z",
       "interviewSessionId": "e1e0fe66-5f22-4f69-b127-6b6763496b27",
       "sourceType": "interview"
+    },
+    {
+      "specId": "086e0352-4e2e-418b-9994-cf6e0c4e6ad0",
+      "goal": "Maestro를 AI Agent Editor로 전환한다. 태스크(Jira 티켓 형태)가 주인공이 되고 에이전트는 태스크를 실행하는 도구가 되는 오케스트레이션 편집기를 구현한다. 사용자는 IDE에서 코드를 작성하듯 태스크 카드에 PRD·스펙·완료기준을 작성하고, 에이전트가 이를 실행하며, Claude Code Teams를 통해 에이전트끼리 서브태스크를 위임하는 계층적 실행 흐름을 Maestro UI에서 시각화한다.",
+      "createdAt": "2026-05-25T04:32:10.708Z",
+      "interviewSessionId": "71bc8546-998e-40aa-b9d4-2c1f23e66b70",
+      "sourceType": "interview"
+    },
+    {
+      "specId": "705157e9-a5cf-405c-a87d-0d4e1bb33f61",
+      "goal": "새 태스크 생성 시 항상 Claude AI와의 채팅을 통해 모든 태스크 필드(title, PRD, spec, 인수 조건, priority, 담당 에이전트, 참조 파일)를 자동으로 완성하는 AI 퍼스트 태스크 생성 기능 구현",
+      "createdAt": "2026-05-25T07:19:16.190Z",
+      "interviewSessionId": "a217d495-15f9-470a-a428-1f9da526378a",
+      "sourceType": "interview"
+    },
+    {
+      "specId": "52406414-787f-4d6c-bcf4-ad42230b0430",
+      "goal": "Maestro 데스크탑 앱에 Vercel AI SDK + Anthropic OAuth 인증 기반 멀티턴 AI 채팅 태스크 생성 기능을 구현한다. 별도 host-service child process(Hono + HTTP tRPC)로 AI 런타임을 분리하고, Electron BrowserWindow 인앱 OAuth 흐름으로 API 키 없이 동작하게 한다.",
+      "createdAt": "2026-05-25T10:01:26.938Z",
+      "interviewSessionId": "09d8308c-44fb-4c03-b0b5-790106e087d9",
+      "sourceType": "interview"
+    },
+    {
+      "specId": "7984bb73-7634-4bf7-9d15-29e099098846",
+      "goal": "Maestro Electron 데스크탑 앱을 Superset과 동등한 현대 아키텍처로 전면 마이그레이션 — TanStack Router, Jotai, TanStack Query, Electric SQL, shadcn/ui, ai-elements, @ai-sdk/anthropic+openai 도입",
+      "createdAt": "2026-05-25T11:24:46.360Z",
+      "sourceType": "text"
+    },
+    {
+      "specId": "f752c1a3-2c53-461c-a717-0e8dd90890ee",
+      "goal": "Maestro Electron 데스크탑 앱을 Superset과 동등한 현대 아키텍처로 전면 마이그레이션 — TanStack Router, Jotai, TanStack Query, Electric SQL, shadcn/ui, @assistant-ui/react, @ai-sdk/anthropic+openai, Mastra(@mastra/core) Agent·Workflow·Tool·Memory 레이어 도입",
+      "createdAt": "2026-05-25T11:28:06.327Z",
+      "sourceType": "text"
+    },
+    {
+      "specId": "59229934-aeaf-484a-8297-4790d6e07f8d",
+      "goal": "Maestro Electron 데스크탑 앱을 Superset과 동등한 현대 아키텍처로 전면 마이그레이션 — TanStack Router, Jotai, TanStack Query, Electric SQL, shadcn/ui, @assistant-ui/react, @ai-sdk/anthropic+openai, Mastra(@mastra/core) Agent·Workflow·Tool·Memory, SuperJSON tRPC transformer 도입",
+      "createdAt": "2026-05-25T12:51:38.027Z",
+      "sourceType": "text"
+    },
+    {
+      "specId": "a8854e68-244d-4cb6-bee2-e1d3ae3ca683",
+      "goal": "Maestro Electron 데스크탑 앱을 Superset과 동등한 현대 아키텍처로 전면 마이그레이션 — TanStack Router, Jotai, TanStack Query, Electric SQL, shadcn/ui, @assistant-ui/react, @ai-sdk/anthropic+openai, Mastra(@mastra/core) Agent·Workflow·Tool·Memory, SuperJSON tRPC transformer, drizzle-orm(better-sqlite3 ORM 레이어) 도입",
+      "createdAt": "2026-05-25T12:55:34.815Z",
+      "sourceType": "text"
+    },
+    {
+      "specId": "0f356544-f802-43c7-be2d-ec5149d53aec",
+      "goal": "Maestro Electron 데스크탑 앱을 Superset과 동등한 현대 아키텍처로 전면 마이그레이션 — TanStack Router, Jotai, TanStack Query, Electric SQL, shadcn/ui, @assistant-ui/react, @ai-sdk/anthropic+openai, Mastra(@mastra/core) Agent·Workflow·Tool·Memory, SuperJSON tRPC transformer, drizzle-orm(better-sqlite3 ORM 레이어), lowdb(App UI 상태 JSON 영속화) 도입",
+      "createdAt": "2026-05-25T12:58:12.233Z",
+      "sourceType": "text"
     }
   ],
   "executionHistory": [
@@ -128,8 +179,103 @@
       "failedTasks": [],
       "resultSummary": "Score: 0.90, goalAlignment: 0.92",
       "completedAt": "2026-04-12T10:58:46.925Z"
+    },
+    {
+      "executeSessionId": "1e695263-f966-4e73-9c69-401938dfd96d",
+      "specId": "086e0352-4e2e-418b-9994-cf6e0c4e6ad0",
+      "completedTasks": [
+        "task-0",
+        "task-1",
+        "task-2",
+        "task-3",
+        "task-4",
+        "task-9",
+        "task-5",
+        "task-6",
+        "task-10",
+        "task-11",
+        "task-7",
+        "task-12",
+        "task-8",
+        "task-13"
+      ],
+      "failedTasks": [],
+      "resultSummary": "Score: 0.92, goalAlignment: 0.91",
+      "completedAt": "2026-05-25T05:17:21.120Z"
+    },
+    {
+      "executeSessionId": "f807e507-a70e-45d4-bcae-9c94b2d404c5",
+      "specId": "52406414-787f-4d6c-bcf4-ad42230b0430",
+      "completedTasks": [
+        "task-0",
+        "task-2",
+        "task-1",
+        "task-4",
+        "task-3",
+        "task-5",
+        "task-6",
+        "task-7",
+        "task-9",
+        "task-8",
+        "task-10",
+        "task-11",
+        "task-12"
+      ],
+      "failedTasks": [],
+      "resultSummary": "Score: 0.95, goalAlignment: 0.93",
+      "completedAt": "2026-05-25T10:31:53.341Z"
+    },
+    {
+      "executeSessionId": "3753b323-e2af-42b5-afb9-7909976d917a",
+      "specId": "0f356544-f802-43c7-be2d-ec5149d53aec",
+      "completedTasks": [
+        "task-00",
+        "task-01",
+        "task-02",
+        "task-03",
+        "task-04",
+        "task-05",
+        "task-06",
+        "task-07",
+        "task-08",
+        "task-09",
+        "task-12",
+        "task-14",
+        "task-15",
+        "task-17",
+        "task-20",
+        "task-10",
+        "task-16",
+        "task-18",
+        "task-21",
+        "task-23",
+        "task-11",
+        "task-13",
+        "task-22",
+        "task-25",
+        "task-19",
+        "task-26",
+        "task-27"
+      ],
+      "failedTasks": [],
+      "resultSummary": "Score: 0.95, goalAlignment: 0.91",
+      "completedAt": "2026-05-25T14:17:04.355Z"
+    },
+    {
+      "executeSessionId": "0bb6ce3e-76a5-4a4e-b629-a830eacf4988",
+      "specId": "705157e9-a5cf-405c-a87d-0d4e1bb33f61",
+      "completedTasks": [
+        "task-0",
+        "task-1",
+        "task-2",
+        "task-3",
+        "task-4"
+      ],
+      "failedTasks": [],
+      "resultSummary": "Score: 0.95, goalAlignment: 0.93",
+      "completedAt": "2026-05-25T14:27:15.497Z"
     }
   ],
   "architectureDecisions": [],
-  "lastUpdated": "2026-04-12T11:01:50.466Z"
+  "lastUpdated": "2026-05-25T14:27:15.498Z"
 }

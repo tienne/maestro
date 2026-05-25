@@ -8,6 +8,7 @@
 import { initTRPC } from '@trpc/server';
 import { observable } from '@trpc/server/observable';
 import { z } from 'zod';
+import superjson from 'superjson';
 import { v4 as uuidv4 } from 'uuid';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -16,6 +17,8 @@ import { exec as execCb, execSync } from 'child_process';
 import { promisify } from 'util';
 import { dialog, shell, BrowserWindow } from 'electron';
 import { getDatabaseManager } from '../db/database';
+import * as schema from '../db/schema';
+import { eq, asc, desc, and, inArray, sql as drizzleSql } from 'drizzle-orm';
 import { getGitService } from '../services/git';
 import { getGitWatcher } from '../services/git-watcher';
 import { getPtyManager } from '../services/pty-manager';
@@ -28,6 +31,8 @@ import type { WrapperHookConfig } from '../services/agent-wrapper';
 import { selectAgentForTask } from '../services/orchestrator';
 import { teamsWatcher } from '../services/teams-watcher';
 import { attachSubagentHandler } from '../services/subagent-handler';
+import { AppStateService } from '../services/app-state-service';
+import type { AppState as LocalAppState } from '../services/app-state-service';
 import type { Workspace, Agent, Repository, EnvVar, AppState, Project, ProjectTask } from '@maestro/shared-types';
 import { simpleGit } from 'simple-git';
 
@@ -35,7 +40,7 @@ const execAsync = promisify(execCb);
 
 // ── tRPC instance ─────────────────────────────────────────────────────────────
 
-const t = initTRPC.create();
+const t = initTRPC.create({ transformer: superjson });
 export const router = t.router;
 export const publicProcedure = t.procedure;
 
@@ -64,21 +69,29 @@ interface SessionRow {
   depends_on_session_id?: string | null;
   context_source_session_id?: string | null;
   last_exit_code?: number | null;
+  // drizzle ORM camelCase aliases
+  workspaceId?: string;
+  agentId?: string;
+  createdAt?: string;
+  isFavorite?: boolean | number;
+  dependsOnSessionId?: string | null;
+  contextSourceSessionId?: string | null;
+  lastExitCode?: number | null;
 }
 
 function rowToSession(row: SessionRow) {
   return {
     id: row.id,
     name: row.name,
-    workspaceId: row.workspace_id,
-    agentId: row.agent_id,
+    workspaceId: row.workspaceId ?? row.workspace_id,
+    agentId: row.agentId ?? row.agent_id,
     status: row.status as 'running' | 'stopped' | 'error' | 'pending' | 'blocked',
     pid: row.pid,
-    createdAt: row.created_at,
-    isFavorite: Boolean(row.is_favorite),
-    dependsOnSessionId: row.depends_on_session_id ?? null,
-    contextSourceSessionId: row.context_source_session_id ?? null,
-    lastExitCode: row.last_exit_code ?? null,
+    createdAt: row.createdAt ?? row.created_at,
+    isFavorite: Boolean(row.isFavorite ?? row.is_favorite),
+    dependsOnSessionId: row.dependsOnSessionId ?? row.depends_on_session_id ?? null,
+    contextSourceSessionId: row.contextSourceSessionId ?? row.context_source_session_id ?? null,
+    lastExitCode: row.lastExitCode ?? row.last_exit_code ?? null,
   };
 }
 
@@ -192,9 +205,11 @@ function checkSocketConnection(host: string, port: number, timeout = 3000): Prom
 
 export const workspaceRouter = router({
   list: publicProcedure.query(() => {
-    const db = getDatabaseManager().getDb();
-    return db
-      .prepare('SELECT * FROM workspaces ORDER BY created_at')
+    const drizzle = getDatabaseManager().drizzle;
+    return drizzle
+      .select()
+      .from(schema.workspaces)
+      .orderBy(asc(schema.workspaces.createdAt))
       .all()
       .map((r) => rowToWorkspace(r as Record<string, unknown>));
   }),
@@ -202,19 +217,20 @@ export const workspaceRouter = router({
   create: publicProcedure
     .input(z.object({ name: z.string().min(1), repositoryId: z.string() }))
     .mutation(async ({ input }) => {
-      const db = getDatabaseManager().getDb();
+      const drizzle = getDatabaseManager().drizzle;
       const git = getGitService();
       const { name, repositoryId } = input;
 
-      const repo = db
-        .prepare('SELECT * FROM repositories WHERE id = ?')
-        .get(repositoryId) as Record<string, unknown>;
+      const [repo] = drizzle
+        .select()
+        .from(schema.repositories)
+        .where(eq(schema.repositories.id, repositoryId))
+        .all();
       if (!repo) throw new Error(`Repository ${repositoryId} not found`);
 
-      const repoPath = repo.path as string;
-      const branchPrefix = (repo.branch_prefix as string) || '';
-      const worktreeBase =
-        (repo.worktree_base_path as string) || path.join(repoPath, '..', 'worktrees');
+      const repoPath = repo.path;
+      const branchPrefix = repo.branchPrefix || '';
+      const worktreeBase = repo.worktreeBasePath || path.join(repoPath, '..', 'worktrees');
       const branch = `${branchPrefix}${name.toLowerCase().replace(/\s+/g, '-')}`;
       const worktreePath = path.join(worktreeBase, name);
       const id = uuidv4();
@@ -223,7 +239,7 @@ export const workspaceRouter = router({
       await git.addWorktree(repoPath, worktreePath, branch);
 
       // setup_script 실행 — worktreePath 기준 async
-      const setupScript = repo.setup_script as string;
+      const setupScript = repo.setupScript;
       if (setupScript?.trim()) {
         try {
           await execAsync(setupScript, { cwd: worktreePath });
@@ -235,43 +251,51 @@ export const workspaceRouter = router({
       }
 
       // DB INSERT
-      db.prepare(
-        `INSERT INTO workspaces (id, name, repository_id, branch, worktree_path) VALUES (?, ?, ?, ?, ?)`
-      ).run(id, name, repositoryId, branch, worktreePath);
+      drizzle.insert(schema.workspaces).values({
+        id, name, repositoryId, branch, worktreePath,
+      }).run();
 
       // INSERT 성공 여부 검증 — 실패 시 worktree 롤백
-      const inserted = db
-        .prepare('SELECT * FROM workspaces WHERE id = ?')
-        .get(id) as Record<string, unknown> | undefined;
+      const [inserted] = drizzle
+        .select()
+        .from(schema.workspaces)
+        .where(eq(schema.workspaces.id, id))
+        .all();
 
       if (!inserted) {
         await git.removeWorktree(repoPath, worktreePath);
         throw new Error('Failed to insert workspace record');
       }
 
-      return rowToWorkspace(inserted);
+      return rowToWorkspace(inserted as Record<string, unknown>);
     }),
 
   delete: publicProcedure
     .input(z.object({ id: z.string() }))
     .mutation(async ({ input }) => {
-      const db = getDatabaseManager().getDb();
+      const drizzle = getDatabaseManager().drizzle;
       const git = getGitService();
       const ptyManager = getPtyManager();
 
-      const workspace = db
-        .prepare('SELECT * FROM workspaces WHERE id = ?')
-        .get(input.id) as Record<string, unknown> | undefined;
+      const [workspace] = drizzle
+        .select()
+        .from(schema.workspaces)
+        .where(eq(schema.workspaces.id, input.id))
+        .all();
       if (!workspace) throw new Error(`Workspace ${input.id} not found`);
 
-      const repo = db
-        .prepare('SELECT * FROM repositories WHERE id = ?')
-        .get(workspace.repository_id) as Record<string, unknown> | undefined;
+      const [repo] = drizzle
+        .select()
+        .from(schema.repositories)
+        .where(eq(schema.repositories.id, workspace.repositoryId))
+        .all();
 
       // 1. 활성 세션 PTY 강제 종료
-      const sessions = db
-        .prepare('SELECT * FROM sessions WHERE workspace_id = ?')
-        .all(input.id) as SessionRow[];
+      const sessions = drizzle
+        .select()
+        .from(schema.sessions)
+        .where(eq(schema.sessions.workspaceId, input.id))
+        .all();
       for (const session of sessions) {
         try {
           if (ptyManager.isAlive(session.id)) {
@@ -283,10 +307,10 @@ export const workspaceRouter = router({
       }
 
       // 2. teardown_script 실행 (있으면)
-      const teardownScript = repo?.teardown_script as string | undefined;
+      const teardownScript = repo?.teardownScript;
       if (teardownScript?.trim()) {
         try {
-          execSync(teardownScript, { cwd: workspace.worktree_path as string, stdio: 'ignore' });
+          execSync(teardownScript, { cwd: workspace.worktreePath, stdio: 'ignore' });
         } catch (err) {
           console.warn('teardown_script failed (ignored):', err);
         }
@@ -295,14 +319,14 @@ export const workspaceRouter = router({
       // 3. git worktree remove (async, prune 포함)
       if (repo?.path) {
         try {
-          await git.removeWorktree(repo.path as string, workspace.worktree_path as string);
+          await git.removeWorktree(repo.path, workspace.worktreePath);
         } catch (err) {
           console.warn('removeWorktree failed (ignored):', err);
         }
       }
 
       // 4. DB 레코드 삭제 (sessions는 CASCADE로 같이 삭제)
-      db.prepare('DELETE FROM workspaces WHERE id = ?').run(input.id);
+      drizzle.delete(schema.workspaces).where(eq(schema.workspaces.id, input.id)).run();
     }),
 
   openInIde: publicProcedure
@@ -311,16 +335,18 @@ export const workspaceRouter = router({
       ide: z.enum(['vscode', 'cursor', 'webstorm', 'zed']),
     }))
     .mutation(async ({ input }): Promise<{ success: boolean; message: string }> => {
-      const db = getDatabaseManager().getDb();
-      const workspace = db
-        .prepare('SELECT * FROM workspaces WHERE id = ?')
-        .get(input.workspaceId) as Record<string, unknown> | undefined;
+      const drizzle = getDatabaseManager().drizzle;
+      const [workspace] = drizzle
+        .select()
+        .from(schema.workspaces)
+        .where(eq(schema.workspaces.id, input.workspaceId))
+        .all();
 
       if (!workspace) {
         throw new Error(`Workspace ${input.workspaceId} not found`);
       }
 
-      const worktreePath = workspace.worktree_path as string;
+      const worktreePath = workspace.worktreePath;
       const isMac = process.platform === 'darwin';
       const isWin = process.platform === 'win32';
 
@@ -365,14 +391,17 @@ export const workspaceRouter = router({
   createSnapshot: publicProcedure
     .input(z.object({ workspaceId: z.string() }))
     .mutation(async ({ input }) => {
-      const db = getDatabaseManager().getDb();
-      const workspace = db
-        .prepare('SELECT * FROM workspaces WHERE id = ?')
-        .get(input.workspaceId) as Record<string, unknown> | undefined;
+      const drizzle = getDatabaseManager().drizzle;
+      const rawDb = getDatabaseManager().getDb();
+      const [workspace] = drizzle
+        .select()
+        .from(schema.workspaces)
+        .where(eq(schema.workspaces.id, input.workspaceId))
+        .all();
       if (!workspace) throw new Error(`Workspace ${input.workspaceId} not found`);
 
-      // 현재 env_vars 수집 (repository 기준)
-      const envRows = db
+      // 현재 env_vars 수집 (JOIN 쿼리 — raw SQL 유지)
+      const envRows = rawDb
         .prepare(
           `SELECT ev.key, ev.value FROM env_vars ev
            JOIN workspaces w ON w.repository_id = ev.repository_id
@@ -385,90 +414,107 @@ export const workspaceRouter = router({
       // git HEAD 조회
       let gitHead = '';
       try {
-        const git = simpleGit(workspace.worktree_path as string);
+        const git = simpleGit(workspace.worktreePath);
         const log = await git.log({ maxCount: 1 });
         gitHead = log.latest?.hash ?? '';
       } catch { /* 무시 */ }
 
       // 레포의 setup_script 가져오기
-      const repo = db
-        .prepare('SELECT setup_script FROM repositories WHERE id = ?')
-        .get(workspace.repository_id) as { setup_script: string } | undefined;
+      const [repoRow] = drizzle
+        .select({ setupScript: schema.repositories.setupScript })
+        .from(schema.repositories)
+        .where(eq(schema.repositories.id, workspace.repositoryId))
+        .all();
 
       const id = uuidv4();
-      db.prepare(
-        `INSERT INTO workspace_snapshots (id, workspace_id, env_vars, git_head, setup_script)
-         VALUES (?, ?, ?, ?, ?)`
-      ).run(id, input.workspaceId, JSON.stringify(envVars), gitHead, repo?.setup_script ?? '');
+      drizzle.insert(schema.workspaceSnapshots).values({
+        id,
+        workspaceId: input.workspaceId,
+        envVars: JSON.stringify(envVars),
+        gitHead,
+        setupScript: repoRow?.setupScript ?? '',
+      }).run();
 
-      // 오래된 스냅샷 정리 (최근 10개 유지)
-      db.prepare(
+      // 오래된 스냅샷 정리 (최근 10개 유지 — raw SQL 유지, subquery)
+      rawDb.prepare(
         `DELETE FROM workspace_snapshots WHERE workspace_id = ? AND id NOT IN (
           SELECT id FROM workspace_snapshots WHERE workspace_id = ? ORDER BY created_at DESC LIMIT 10
         )`
       ).run(input.workspaceId, input.workspaceId);
 
-      const row = db.prepare('SELECT * FROM workspace_snapshots WHERE id = ?').get(id) as Record<string, unknown>;
+      const [row] = drizzle
+        .select()
+        .from(schema.workspaceSnapshots)
+        .where(eq(schema.workspaceSnapshots.id, id))
+        .all();
       return {
-        id: row.id as string,
-        workspaceId: row.workspace_id as string,
-        envVars: JSON.parse(row.env_vars as string) as Record<string, string>,
-        gitHead: row.git_head as string,
-        setupScript: row.setup_script as string,
-        createdAt: row.created_at as string,
+        id: row.id,
+        workspaceId: row.workspaceId,
+        envVars: JSON.parse(row.envVars) as Record<string, string>,
+        gitHead: row.gitHead,
+        setupScript: row.setupScript,
+        createdAt: row.createdAt,
       };
     }),
 
   listSnapshots: publicProcedure
     .input(z.object({ workspaceId: z.string() }))
     .query(({ input }) => {
-      const db = getDatabaseManager().getDb();
-      const rows = db
-        .prepare('SELECT * FROM workspace_snapshots WHERE workspace_id = ? ORDER BY created_at DESC LIMIT 10')
-        .all(input.workspaceId) as Array<Record<string, unknown>>;
+      const drizzle = getDatabaseManager().drizzle;
+      const rows = drizzle
+        .select()
+        .from(schema.workspaceSnapshots)
+        .where(eq(schema.workspaceSnapshots.workspaceId, input.workspaceId))
+        .orderBy(desc(schema.workspaceSnapshots.createdAt))
+        .limit(10)
+        .all();
       return rows.map((row) => ({
-        id: row.id as string,
-        workspaceId: row.workspace_id as string,
-        envVars: JSON.parse(row.env_vars as string) as Record<string, string>,
-        gitHead: row.git_head as string,
-        setupScript: row.setup_script as string,
-        createdAt: row.created_at as string,
+        id: row.id,
+        workspaceId: row.workspaceId,
+        envVars: JSON.parse(row.envVars) as Record<string, string>,
+        gitHead: row.gitHead,
+        setupScript: row.setupScript,
+        createdAt: row.createdAt,
       }));
     }),
 
   restoreSnapshot: publicProcedure
     .input(z.object({ snapshotId: z.string() }))
     .mutation(async ({ input }) => {
-      const db = getDatabaseManager().getDb();
-      const snap = db
-        .prepare('SELECT * FROM workspace_snapshots WHERE id = ?')
-        .get(input.snapshotId) as Record<string, unknown> | undefined;
+      const drizzle = getDatabaseManager().drizzle;
+      const [snap] = drizzle
+        .select()
+        .from(schema.workspaceSnapshots)
+        .where(eq(schema.workspaceSnapshots.id, input.snapshotId))
+        .all();
       if (!snap) throw new Error(`Snapshot ${input.snapshotId} not found`);
 
-      const workspaceId = snap.workspace_id as string;
-      const workspace = db
-        .prepare('SELECT * FROM workspaces WHERE id = ?')
-        .get(workspaceId) as Record<string, unknown> | undefined;
-      if (!workspace) throw new Error(`Workspace ${workspaceId} not found`);
+      const [workspace] = drizzle
+        .select()
+        .from(schema.workspaces)
+        .where(eq(schema.workspaces.id, snap.workspaceId))
+        .all();
+      if (!workspace) throw new Error(`Workspace ${snap.workspaceId} not found`);
 
-      const repoId = workspace.repository_id as string;
-      const envVars = JSON.parse(snap.env_vars as string) as Record<string, string>;
+      const repoId = workspace.repositoryId;
+      const envVars = JSON.parse(snap.envVars) as Record<string, string>;
 
       // 기존 env_vars 삭제 후 스냅샷 것으로 교체
-      db.prepare('DELETE FROM env_vars WHERE repository_id = ?').run(repoId);
-      const insertEnv = db.prepare(
-        `INSERT INTO env_vars (id, repository_id, key, value) VALUES (?, ?, ?, ?)`
-      );
+      drizzle.delete(schema.envVars).where(eq(schema.envVars.repositoryId, repoId)).run();
       for (const [key, value] of Object.entries(envVars)) {
-        insertEnv.run(uuidv4(), repoId, key, value);
+        drizzle.insert(schema.envVars).values({
+          id: uuidv4(),
+          repositoryId: repoId,
+          key,
+          value,
+        }).run();
       }
 
       // git HEAD 복원 (soft reset)
-      const gitHead = snap.git_head as string;
-      if (gitHead) {
+      if (snap.gitHead) {
         try {
-          const git = simpleGit(workspace.worktree_path as string);
-          await git.reset(['--soft', gitHead]);
+          const git = simpleGit(workspace.worktreePath);
+          await git.reset(['--soft', snap.gitHead]);
         } catch { /* 무시 — git reset 실패는 치명적이지 않음 */ }
       }
 
@@ -485,36 +531,46 @@ export const workspaceRouter = router({
       hookOnError: z.string().optional(),
     }))
     .mutation(({ input }) => {
-      const db = getDatabaseManager().getDb();
-      const fields: string[] = [];
-      const values: unknown[] = [];
-      if (input.hookOnSessionStart !== undefined) { fields.push('hook_on_session_start = ?'); values.push(input.hookOnSessionStart); }
-      if (input.hookOnAgentComplete !== undefined) { fields.push('hook_on_agent_complete = ?'); values.push(input.hookOnAgentComplete); }
-      if (input.hookOnError !== undefined) { fields.push('hook_on_error = ?'); values.push(input.hookOnError); }
-      if (fields.length > 0) {
-        db.prepare(`UPDATE workspaces SET ${fields.join(', ')} WHERE id = ?`).run(...values, input.workspaceId);
+      const drizzle = getDatabaseManager().drizzle;
+      const updates: Partial<schema.Workspace> = {};
+      if (input.hookOnSessionStart !== undefined) updates.hookOnSessionStart = input.hookOnSessionStart;
+      if (input.hookOnAgentComplete !== undefined) updates.hookOnAgentComplete = input.hookOnAgentComplete;
+      if (input.hookOnError !== undefined) updates.hookOnError = input.hookOnError;
+      if (Object.keys(updates).length > 0) {
+        drizzle.update(schema.workspaces).set(updates).where(eq(schema.workspaces.id, input.workspaceId)).run();
       }
-      const row = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(input.workspaceId) as Record<string, unknown>;
+      const [row] = drizzle
+        .select()
+        .from(schema.workspaces)
+        .where(eq(schema.workspaces.id, input.workspaceId))
+        .all();
       if (!row) throw new Error(`Workspace ${input.workspaceId} not found`);
       return {
-        ...rowToWorkspace(row),
-        hookOnSessionStart: (row.hook_on_session_start as string) ?? '',
-        hookOnAgentComplete: (row.hook_on_agent_complete as string) ?? '',
-        hookOnError: (row.hook_on_error as string) ?? '',
+        ...rowToWorkspace(row as Record<string, unknown>),
+        hookOnSessionStart: row.hookOnSessionStart ?? '',
+        hookOnAgentComplete: row.hookOnAgentComplete ?? '',
+        hookOnError: row.hookOnError ?? '',
       };
     }),
 
   getHooks: publicProcedure
     .input(z.object({ workspaceId: z.string() }))
     .query(({ input }) => {
-      const db = getDatabaseManager().getDb();
-      const row = db.prepare('SELECT hook_on_session_start, hook_on_agent_complete, hook_on_error FROM workspaces WHERE id = ?')
-        .get(input.workspaceId) as Record<string, unknown> | undefined;
+      const drizzle = getDatabaseManager().drizzle;
+      const [row] = drizzle
+        .select({
+          hookOnSessionStart: schema.workspaces.hookOnSessionStart,
+          hookOnAgentComplete: schema.workspaces.hookOnAgentComplete,
+          hookOnError: schema.workspaces.hookOnError,
+        })
+        .from(schema.workspaces)
+        .where(eq(schema.workspaces.id, input.workspaceId))
+        .all();
       if (!row) throw new Error(`Workspace ${input.workspaceId} not found`);
       return {
-        hookOnSessionStart: (row.hook_on_session_start as string) ?? '',
-        hookOnAgentComplete: (row.hook_on_agent_complete as string) ?? '',
-        hookOnError: (row.hook_on_error as string) ?? '',
+        hookOnSessionStart: row.hookOnSessionStart ?? '',
+        hookOnAgentComplete: row.hookOnAgentComplete ?? '',
+        hookOnError: row.hookOnError ?? '',
       };
     }),
 
@@ -523,9 +579,9 @@ export const workspaceRouter = router({
   notifyEnvChange: publicProcedure
     .input(z.object({ repositoryId: z.string() }))
     .mutation(({ input }) => {
-      const db = getDatabaseManager().getDb();
-      // 해당 repo에 속한 모든 워크스페이스의 활성 세션 찾기
-      const sessions = db
+      // JOIN 쿼리 — raw SQL 유지
+      const rawDb = getDatabaseManager().getDb();
+      const sessions = rawDb
         .prepare(
           `SELECT s.id FROM sessions s
            JOIN workspaces w ON s.workspace_id = w.id
@@ -547,26 +603,29 @@ export const workspaceRouter = router({
   reloadEnv: publicProcedure
     .input(z.object({ sessionId: z.string() }))
     .mutation(({ input }) => {
-      const db = getDatabaseManager().getDb();
+      const drizzle = getDatabaseManager().drizzle;
+      const rawDb = getDatabaseManager().getDb();
       const ptyManager = getPtyManager();
 
       if (!ptyManager.isAlive(input.sessionId)) {
         throw new Error(`Session ${input.sessionId} is not running`);
       }
 
-      const session = db
-        .prepare('SELECT * FROM sessions WHERE id = ?')
-        .get(input.sessionId) as SessionRow | undefined;
+      const [session] = drizzle
+        .select()
+        .from(schema.sessions)
+        .where(eq(schema.sessions.id, input.sessionId))
+        .all();
       if (!session) throw new Error(`Session ${input.sessionId} not found`);
 
-      // 최신 env_vars 조회
-      const envRows = db
+      // 최신 env_vars 조회 (JOIN 쿼리 — raw SQL 유지)
+      const envRows = rawDb
         .prepare(
           `SELECT ev.key, ev.value FROM env_vars ev
            JOIN workspaces w ON w.repository_id = ev.repository_id
            WHERE w.id = ?`
         )
-        .all(session.workspace_id) as Array<{ key: string; value: string }>;
+        .all(session.workspaceId) as Array<{ key: string; value: string }>;
 
       // export 명령어를 PTY에 순서대로 전송
       for (const row of envRows) {
@@ -583,19 +642,24 @@ export const sessionRouter = router({
   list: publicProcedure
     .input(z.object({ workspaceId: z.string() }))
     .query(({ input }) => {
-      const db = getDatabaseManager().getDb();
-      return db
-        .prepare('SELECT * FROM sessions WHERE workspace_id = ? ORDER BY created_at DESC')
-        .all(input.workspaceId)
-        .map((r) => rowToSession(r as SessionRow));
+      const drizzle = getDatabaseManager().drizzle;
+      return drizzle
+        .select()
+        .from(schema.sessions)
+        .where(eq(schema.sessions.workspaceId, input.workspaceId))
+        .orderBy(desc(schema.sessions.createdAt))
+        .all()
+        .map((r) => rowToSession(r as unknown as SessionRow));
     }),
 
   listAll: publicProcedure.query(() => {
-    const db = getDatabaseManager().getDb();
-    return db
-      .prepare('SELECT * FROM sessions ORDER BY created_at DESC')
+    const drizzle = getDatabaseManager().drizzle;
+    return drizzle
+      .select()
+      .from(schema.sessions)
+      .orderBy(desc(schema.sessions.createdAt))
       .all()
-      .map((r) => rowToSession(r as SessionRow));
+      .map((r) => rowToSession(r as unknown as SessionRow));
   }),
 
   create: publicProcedure
@@ -609,17 +673,21 @@ export const sessionRouter = router({
       })
     )
     .mutation(({ input }) => {
-      const db = getDatabaseManager().getDb();
+      const drizzle = getDatabaseManager().drizzle;
       const { name, workspaceId, agentId } = input;
 
-      const workspace = db
-        .prepare('SELECT * FROM workspaces WHERE id = ?')
-        .get(workspaceId) as Record<string, unknown> | undefined;
+      const [workspace] = drizzle
+        .select()
+        .from(schema.workspaces)
+        .where(eq(schema.workspaces.id, workspaceId))
+        .all();
       if (!workspace) throw new Error(`Workspace ${workspaceId} not found`);
 
-      const agent = db
-        .prepare('SELECT * FROM agents WHERE id = ?')
-        .get(agentId) as Record<string, unknown> | undefined;
+      const [agent] = drizzle
+        .select()
+        .from(schema.agents)
+        .where(eq(schema.agents.id, agentId))
+        .all();
       if (!agent) throw new Error(`Agent ${agentId} not found`);
 
       const id = uuidv4();
@@ -627,20 +695,33 @@ export const sessionRouter = router({
       const hasDeps = Boolean(input.dependsOnSessionId);
       let initialStatus: 'pending' | 'blocked' = 'pending';
       if (hasDeps) {
-        const dep = db.prepare('SELECT status FROM sessions WHERE id = ?').get(input.dependsOnSessionId!) as { status: string } | undefined;
+        const [dep] = drizzle
+          .select({ status: schema.sessions.status })
+          .from(schema.sessions)
+          .where(eq(schema.sessions.id, input.dependsOnSessionId!))
+          .all();
         if (dep && dep.status !== 'stopped') {
           initialStatus = 'blocked';
         }
       }
 
-      db.prepare(
-        `INSERT INTO sessions (id, name, workspace_id, agent_id, status, pid, depends_on_session_id, context_source_session_id)
-         VALUES (?, ?, ?, ?, ?, NULL, ?, ?)`
-      ).run(id, name, workspaceId, agentId, initialStatus, input.dependsOnSessionId ?? null, input.contextSourceSessionId ?? null);
+      drizzle.insert(schema.sessions).values({
+        id,
+        name,
+        workspaceId,
+        agentId,
+        status: initialStatus,
+        pid: null,
+        dependsOnSessionId: input.dependsOnSessionId ?? null,
+        contextSourceSessionId: input.contextSourceSessionId ?? null,
+      }).run();
 
-      return rowToSession(
-        db.prepare('SELECT * FROM sessions WHERE id = ?').get(id) as SessionRow
-      );
+      const [inserted] = drizzle
+        .select()
+        .from(schema.sessions)
+        .where(eq(schema.sessions.id, id))
+        .all();
+      return rowToSession(inserted as unknown as SessionRow);
     }),
 
   launch: publicProcedure
@@ -652,51 +733,59 @@ export const sessionRouter = router({
       })
     )
     .mutation(async ({ input }) => {
-      const db = getDatabaseManager().getDb();
+      const drizzle = getDatabaseManager().drizzle;
+      const rawDb = getDatabaseManager().getDb();
       const ptyManager = getPtyManager();
       const { sessionId, cols, rows } = input;
 
-      const session = db
-        .prepare('SELECT * FROM sessions WHERE id = ?')
-        .get(sessionId) as SessionRow | undefined;
+      const [session] = drizzle
+        .select()
+        .from(schema.sessions)
+        .where(eq(schema.sessions.id, sessionId))
+        .all();
       if (!session) throw new Error(`Session ${sessionId} not found`);
 
       // 이미 launch된 세션에 중복 요청이 오면 무시 (Strict Mode 이중 호출 방어)
       if (session.status !== 'pending') {
-        return rowToSession(session);
+        return rowToSession(session as unknown as SessionRow);
       }
 
-      const workspace = db
-        .prepare('SELECT * FROM workspaces WHERE id = ?')
-        .get(session.workspace_id) as Record<string, unknown> | undefined;
-      if (!workspace) throw new Error(`Workspace ${session.workspace_id} not found`);
+      const [workspace] = drizzle
+        .select()
+        .from(schema.workspaces)
+        .where(eq(schema.workspaces.id, session.workspaceId))
+        .all();
+      if (!workspace) throw new Error(`Workspace ${session.workspaceId} not found`);
 
-      const agent = db
-        .prepare('SELECT * FROM agents WHERE id = ?')
-        .get(session.agent_id) as Record<string, unknown> | undefined;
-      if (!agent) throw new Error(`Agent ${session.agent_id} not found`);
+      const [agent] = drizzle
+        .select()
+        .from(schema.agents)
+        .where(eq(schema.agents.id, session.agentId))
+        .all();
+      if (!agent) throw new Error(`Agent ${session.agentId} not found`);
 
+      // JOIN 쿼리 — raw SQL 유지
       interface EnvVarRow { key: string; value: string; }
-      const envVarRows = db
+      const envVarRows = rawDb
         .prepare(
           `SELECT ev.key, ev.value FROM env_vars ev
            JOIN repositories r ON r.id = ev.repository_id
            JOIN workspaces w ON w.repository_id = r.id
            WHERE w.id = ?`
         )
-        .all(session.workspace_id) as EnvVarRow[];
+        .all(session.workspaceId) as EnvVarRow[];
 
       const repoEnv: Record<string, string> = {};
       for (const row of envVarRows) {
         repoEnv[row.key] = row.value;
       }
 
-      const agentArgs: string[] = JSON.parse(agent.args as string);
-      const agentEnv: Record<string, string> = JSON.parse(agent.env as string);
+      const agentArgs: string[] = JSON.parse(agent.args);
+      const agentEnv: Record<string, string> = JSON.parse(agent.env);
       const mergedEnv = { ...repoEnv, ...agentEnv };
 
       // 에이전트 타입을 agent.name 기준으로 결정 (built-in 에이전트의 경우)
-      const agentName = (agent.name as string).toLowerCase();
+      const agentName = agent.name.toLowerCase();
       const agentType = agentName.includes('claude')
         ? 'claude-code'
         : agentName.includes('gemini')
@@ -733,23 +822,34 @@ export const sessionRouter = router({
       intelligence.startSession(sessionId);
 
       // M5-03: lifecycle hook 조회
-      const wsHooks = db
-        .prepare('SELECT hook_on_session_start, hook_on_agent_complete, hook_on_error FROM workspaces WHERE id = ?')
-        .get(session.workspace_id) as { hook_on_session_start: string; hook_on_agent_complete: string; hook_on_error: string } | undefined;
+      const [wsHooksRow] = drizzle
+        .select({
+          hookOnSessionStart: schema.workspaces.hookOnSessionStart,
+          hookOnAgentComplete: schema.workspaces.hookOnAgentComplete,
+          hookOnError: schema.workspaces.hookOnError,
+        })
+        .from(schema.workspaces)
+        .where(eq(schema.workspaces.id, session.workspaceId))
+        .all();
+      const wsHooks = wsHooksRow ? {
+        hook_on_session_start: wsHooksRow.hookOnSessionStart,
+        hook_on_agent_complete: wsHooksRow.hookOnAgentComplete,
+        hook_on_error: wsHooksRow.hookOnError,
+      } : undefined;
 
       const ptyProcess = ptyManager.create(
         sessionId,
-        agent.command as string,
+        agent.command,
         agentArgs,
         mergedEnv,
-        workspace.worktree_path as string,
+        workspace.worktreePath,
         cols,
         rows
       );
 
       // M5-03: onSessionStart 훅 실행
       if (wsHooks?.hook_on_session_start?.trim()) {
-        execAsync(wsHooks.hook_on_session_start, { cwd: workspace.worktree_path as string })
+        execAsync(wsHooks.hook_on_session_start, { cwd: workspace.worktreePath })
           .then(() => {
             const win = getMainWindow();
             if (win && !win.isDestroyed()) {
@@ -765,12 +865,14 @@ export const sessionRouter = router({
       }
 
       // M11: Task 기반 세션인 경우 서브에이전트 spawn 핸들러 연결
-      if (workspace.task_id) {
-        const taskRow = db
-          .prepare('SELECT project_id FROM tasks WHERE id = ?')
-          .get(workspace.task_id as string) as { project_id: string } | undefined;
+      if (workspace.taskId) {
+        const [taskRow] = drizzle
+          .select({ projectId: schema.tasks.projectId })
+          .from(schema.tasks)
+          .where(eq(schema.tasks.id, workspace.taskId))
+          .all();
         if (taskRow) {
-          attachSubagentHandler(sessionId, workspace.task_id as string, taskRow.project_id);
+          attachSubagentHandler(sessionId, workspace.taskId, taskRow.projectId);
         }
       }
 
@@ -785,7 +887,7 @@ export const sessionRouter = router({
         if (wsHooks?.hook_on_error?.trim()) {
           const errorPatterns = ['Error:', 'error:', 'FATAL', 'panic:', 'Traceback'];
           if (errorPatterns.some((p) => data.includes(p))) {
-            execAsync(wsHooks.hook_on_error, { cwd: workspace.worktree_path as string })
+            execAsync(wsHooks.hook_on_error, { cwd: workspace.worktreePath })
               .then(() => {
                 const win = getMainWindow();
                 if (win && !win.isDestroyed()) {
@@ -813,7 +915,10 @@ export const sessionRouter = router({
         intelligence.handleExit(sid, exitCode);
         const status = exitCode === 0 ? 'stopped' : 'error';
         // M7-04: exit code를 DB에 저장
-        db.prepare('UPDATE sessions SET status = ?, pid = NULL, last_exit_code = ? WHERE id = ?').run(status, exitCode ?? null, sid);
+        drizzle.update(schema.sessions)
+          .set({ status, pid: null, lastExitCode: exitCode ?? null })
+          .where(eq(schema.sessions.id, sid))
+          .run();
 
         // M7-04: 비정상 종료 시 에러 로그 기록
         if (exitCode !== 0 && exitCode !== undefined) {
@@ -828,7 +933,7 @@ export const sessionRouter = router({
 
         // M5-03: onAgentComplete 훅 (exit 0일 때만 실행)
         if (exitCode === 0 && wsHooks?.hook_on_agent_complete?.trim()) {
-          execAsync(wsHooks.hook_on_agent_complete, { cwd: workspace.worktree_path as string })
+          execAsync(wsHooks.hook_on_agent_complete, { cwd: workspace.worktreePath })
             .then(() => {
               const hWin = getMainWindow();
               if (hWin && !hWin.isDestroyed()) {
@@ -846,11 +951,13 @@ export const sessionRouter = router({
         // 스크롤백 버퍼 DB 저장 (세션 재개 시 복원)
         const scrollback = ptyManager.getScrollback(sid);
         if (scrollback) {
-          db.prepare(`
-            INSERT INTO session_scrollbacks (session_id, data, updated_at)
-            VALUES (?, ?, datetime('now'))
-            ON CONFLICT(session_id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at
-          `).run(sid, scrollback);
+          drizzle.insert(schema.sessionScrollbacks)
+            .values({ sessionId: sid, data: scrollback })
+            .onConflictDoUpdate({
+              target: schema.sessionScrollbacks.sessionId,
+              set: { data: scrollback },
+            })
+            .run();
         }
 
         // M9-04: 세션 아카이브 자동 저장
@@ -864,19 +971,21 @@ export const sessionRouter = router({
         }
 
         // M4-01: 의존성 체인 — 후속 세션 자동 시작/블록
-        const dependents = db
-          .prepare(`SELECT * FROM sessions WHERE depends_on_session_id = ?`)
-          .all(sid) as SessionRow[];
+        const dependents = drizzle
+          .select()
+          .from(schema.sessions)
+          .where(eq(schema.sessions.dependsOnSessionId, sid))
+          .all();
         for (const dep of dependents) {
           if (exitCode === 0) {
             // 선행 세션 성공 → 의존 세션을 pending으로 변경 (XTerminal onReady → launch 흐름)
-            db.prepare('UPDATE sessions SET status = ? WHERE id = ?').run('pending', dep.id);
+            drizzle.update(schema.sessions).set({ status: 'pending' }).where(eq(schema.sessions.id, dep.id)).run();
             if (win && !win.isDestroyed()) {
               win.webContents.send('session-status', { sessionId: dep.id, status: 'pending' });
             }
           } else {
             // 선행 세션 실패 → blocked
-            db.prepare('UPDATE sessions SET status = ? WHERE id = ?').run('blocked', dep.id);
+            drizzle.update(schema.sessions).set({ status: 'blocked' }).where(eq(schema.sessions.id, dep.id)).run();
             if (win && !win.isDestroyed()) {
               win.webContents.send('session-status', { sessionId: dep.id, status: 'blocked' });
             }
@@ -900,23 +1009,24 @@ export const sessionRouter = router({
         }
       });
 
-      db.prepare('UPDATE sessions SET status = ?, pid = ? WHERE id = ?').run(
-        'running',
-        ptyProcess.pid as number,
-        sessionId
-      );
+      drizzle.update(schema.sessions)
+        .set({ status: 'running', pid: ptyProcess.pid as number })
+        .where(eq(schema.sessions.id, sessionId))
+        .run();
 
       // M6-02: 세션 시작 웹훅 이벤트 발송
       emitWebhookEvent('session.started', { sessionId });
 
       // M4-02: 컨텍스트 소스 세션이 있으면 출력을 stdin에 주입
-      if (session.context_source_session_id) {
-        const srcScrollback = ptyManager.getScrollback(session.context_source_session_id);
+      if (session.contextSourceSessionId) {
+        const srcScrollback = ptyManager.getScrollback(session.contextSourceSessionId);
         let contextData = srcScrollback;
         if (!contextData) {
-          const srcRow = db
-            .prepare('SELECT data FROM session_scrollbacks WHERE session_id = ?')
-            .get(session.context_source_session_id) as { data: string } | undefined;
+          const [srcRow] = drizzle
+            .select({ data: schema.sessionScrollbacks.data })
+            .from(schema.sessionScrollbacks)
+            .where(eq(schema.sessionScrollbacks.sessionId, session.contextSourceSessionId))
+            .all();
           contextData = srcRow?.data ?? '';
         }
         if (contextData) {
@@ -931,44 +1041,48 @@ export const sessionRouter = router({
         }
       }
 
-      db.prepare(
-        `INSERT INTO app_state (key, value) VALUES ('last_session_id', ?)
-         ON CONFLICT(key) DO UPDATE SET value = excluded.value`
-      ).run(JSON.stringify(sessionId));
+      void AppStateService.getInstance().set({ lastSessionId: sessionId });
 
-      return rowToSession(
-        db.prepare('SELECT * FROM sessions WHERE id = ?').get(sessionId) as SessionRow
-      );
+      const [finalSession] = drizzle
+        .select()
+        .from(schema.sessions)
+        .where(eq(schema.sessions.id, sessionId))
+        .all();
+      return rowToSession(finalSession as unknown as SessionRow);
     }),
 
   stop: publicProcedure
     .input(z.object({ sessionId: z.string() }))
     .mutation(async ({ input }) => {
-      const db = getDatabaseManager().getDb();
+      const drizzle = getDatabaseManager().drizzle;
       const ptyManager = getPtyManager();
       const { sessionId } = input;
 
       // 세션에 연결된 에이전트 정보 조회 (wrapper 훅 제거용)
-      const session = db
-        .prepare('SELECT * FROM sessions WHERE id = ?')
-        .get(sessionId) as SessionRow | undefined;
+      const [session] = drizzle
+        .select()
+        .from(schema.sessions)
+        .where(eq(schema.sessions.id, sessionId))
+        .all();
 
       if (ptyManager.isAlive(sessionId)) {
         ptyManager.kill(sessionId);
       }
-      db.prepare('UPDATE sessions SET status = ?, pid = NULL WHERE id = ?').run(
-        'stopped',
-        sessionId
-      );
+      drizzle.update(schema.sessions)
+        .set({ status: 'stopped', pid: null })
+        .where(eq(schema.sessions.id, sessionId))
+        .run();
 
       // wrapper 훅 제거 (세션 정보가 있을 때만)
       if (session) {
-        const agent = db
-          .prepare('SELECT * FROM agents WHERE id = ?')
-          .get(session.agent_id) as Record<string, unknown> | undefined;
+        const [agent] = drizzle
+          .select()
+          .from(schema.agents)
+          .where(eq(schema.agents.id, session.agentId))
+          .all();
 
         if (agent) {
-          const agentName = (agent.name as string).toLowerCase();
+          const agentName = agent.name.toLowerCase();
           const agentType = agentName.includes('claude')
             ? 'claude-code'
             : agentName.includes('gemini')
@@ -1001,13 +1115,13 @@ export const sessionRouter = router({
   delete: publicProcedure
     .input(z.object({ sessionId: z.string() }))
     .mutation(({ input }) => {
-      const db = getDatabaseManager().getDb();
+      const drizzle = getDatabaseManager().drizzle;
       const ptyManager = getPtyManager();
       const { sessionId } = input;
       if (ptyManager.isAlive(sessionId)) {
         ptyManager.kill(sessionId);
       }
-      db.prepare('DELETE FROM sessions WHERE id = ?').run(sessionId);
+      drizzle.delete(schema.sessions).where(eq(schema.sessions.id, sessionId)).run();
     }),
 
   sendInput: publicProcedure
@@ -1029,41 +1143,37 @@ export const sessionRouter = router({
     }),
 
   getLast: publicProcedure.query(() => {
-    const db = getDatabaseManager().getDb();
-    const row = db
-      .prepare(`SELECT value FROM app_state WHERE key = 'last_session_id'`)
-      .get() as { value: string } | undefined;
+    const lastId = AppStateService.getInstance().get().lastSessionId;
+    if (!lastId) return null;
 
-    if (!row) return null;
+    const drizzle = getDatabaseManager().drizzle;
+    const [session] = drizzle
+      .select()
+      .from(schema.sessions)
+      .where(eq(schema.sessions.id, lastId))
+      .all();
 
-    const lastId = JSON.parse(row.value) as string;
-    const session = db
-      .prepare('SELECT * FROM sessions WHERE id = ?')
-      .get(lastId) as SessionRow | undefined;
-
-    return session ? rowToSession(session) : null;
+    return session ? rowToSession(session as unknown as SessionRow) : null;
   }),
 
   setLastActive: publicProcedure
     .input(z.object({ sessionId: z.string() }))
-    .mutation(({ input }) => {
-      const db = getDatabaseManager().getDb();
-      db.prepare(
-        `INSERT INTO app_state (key, value) VALUES ('last_session_id', ?)
-         ON CONFLICT(key) DO UPDATE SET value = excluded.value`
-      ).run(JSON.stringify(input.sessionId));
+    .mutation(async ({ input }) => {
+      await AppStateService.getInstance().set({ lastSessionId: input.sessionId });
     }),
 
   resume: publicProcedure
     .input(z.object({ sessionId: z.string(), restart: z.boolean().optional() }))
     .mutation(({ input }) => {
-      const db = getDatabaseManager().getDb();
+      const drizzle = getDatabaseManager().drizzle;
       const ptyManager = getPtyManager();
       const { sessionId, restart } = input;
 
-      const session = db
-        .prepare('SELECT * FROM sessions WHERE id = ?')
-        .get(sessionId) as SessionRow | undefined;
+      const [session] = drizzle
+        .select()
+        .from(schema.sessions)
+        .where(eq(schema.sessions.id, sessionId))
+        .all();
       if (!session) throw new Error(`Session ${sessionId} not found`);
 
       if (ptyManager.isAlive(sessionId)) {
@@ -1081,36 +1191,41 @@ export const sessionRouter = router({
       // restart=true: PTY가 없는 상태에서 재시작 — 'pending'으로 리셋해
       // XTerminal의 onReady → session.launch 흐름을 다시 타게 한다.
       if (restart && !ptyManager.isAlive(sessionId)) {
-        db.prepare('UPDATE sessions SET status = ?, pid = NULL WHERE id = ?').run('pending', sessionId);
+        drizzle.update(schema.sessions)
+          .set({ status: 'pending', pid: null })
+          .where(eq(schema.sessions.id, sessionId))
+          .run();
       }
 
-      db.prepare(
-        `INSERT INTO app_state (key, value) VALUES ('last_session_id', ?)
-         ON CONFLICT(key) DO UPDATE SET value = excluded.value`
-      ).run(JSON.stringify(sessionId));
+      void AppStateService.getInstance().set({ lastSessionId: sessionId });
 
-      return rowToSession(
-        db.prepare('SELECT * FROM sessions WHERE id = ?').get(sessionId) as SessionRow
-      );
+      const [updated] = drizzle
+        .select()
+        .from(schema.sessions)
+        .where(eq(schema.sessions.id, sessionId))
+        .all();
+      return rowToSession(updated as unknown as SessionRow);
     }),
 
   updateStatus: publicProcedure
     .input(z.object({ sessionId: z.string(), status: z.string() }))
     .mutation(({ input }) => {
-      const db = getDatabaseManager().getDb();
-      db.prepare('UPDATE sessions SET status = ? WHERE id = ?').run(
-        input.status,
-        input.sessionId
-      );
+      const drizzle = getDatabaseManager().drizzle;
+      drizzle.update(schema.sessions)
+        .set({ status: input.status })
+        .where(eq(schema.sessions.id, input.sessionId))
+        .run();
     }),
 
   getPorts: publicProcedure
     .input(z.object({ sessionId: z.string() }))
     .query(async ({ input }) => {
-      const db = getDatabaseManager().getDb();
-      const session = db
-        .prepare('SELECT * FROM sessions WHERE id = ?')
-        .get(input.sessionId) as SessionRow | undefined;
+      const drizzle = getDatabaseManager().drizzle;
+      const [session] = drizzle
+        .select()
+        .from(schema.sessions)
+        .where(eq(schema.sessions.id, input.sessionId))
+        .all();
 
       if (!session || !session.pid || session.status !== 'running') {
         return [];
@@ -1128,15 +1243,17 @@ export const sessionRouter = router({
   getScrollback: publicProcedure
     .input(z.object({ sessionId: z.string() }))
     .query(({ input }) => {
-      const db = getDatabaseManager().getDb();
+      const drizzle = getDatabaseManager().drizzle;
       // 먼저 메모리 버퍼에서 확인 (현재 세션이 실행 중이면 최신 버퍼 반환)
       const live = getPtyManager().getScrollback(input.sessionId);
       if (live) return live;
 
       // 메모리에 없으면 DB에서 조회 (이전에 종료된 세션)
-      const row = db
-        .prepare('SELECT data FROM session_scrollbacks WHERE session_id = ?')
-        .get(input.sessionId) as { data: string } | undefined;
+      const [row] = drizzle
+        .select({ data: schema.sessionScrollbacks.data })
+        .from(schema.sessionScrollbacks)
+        .where(eq(schema.sessionScrollbacks.sessionId, input.sessionId))
+        .all();
       return row?.data ?? '';
     }),
 
@@ -1163,46 +1280,54 @@ export const sessionRouter = router({
   savePrompt: publicProcedure
     .input(z.object({ sessionId: z.string(), text: z.string().min(1) }))
     .mutation(({ input }) => {
-      const db = getDatabaseManager().getDb();
-      const id = uuidv4();
-      db.prepare(
-        `INSERT INTO prompt_history (id, session_id, text) VALUES (?, ?, ?)`
-      ).run(id, input.sessionId, input.text);
+      const drizzle = getDatabaseManager().drizzle;
+      drizzle.insert(schema.promptHistory).values({
+        id: uuidv4(),
+        sessionId: input.sessionId,
+        text: input.text,
+      }).run();
     }),
 
   getPromptHistory: publicProcedure
     .input(z.object({ sessionId: z.string(), limit: z.number().int().positive().max(100).default(50) }))
     .query(({ input }) => {
-      const db = getDatabaseManager().getDb();
-      return (db
-        .prepare(
-          `SELECT id, text, created_at FROM prompt_history
-           WHERE session_id = ? ORDER BY created_at DESC LIMIT ?`
-        )
-        .all(input.sessionId, input.limit) as Array<{ id: string; text: string; created_at: string }>)
-        .reverse(); // 오래된 것이 앞에 오도록
+      const drizzle = getDatabaseManager().drizzle;
+      const rows = drizzle
+        .select({ id: schema.promptHistory.id, text: schema.promptHistory.text, createdAt: schema.promptHistory.createdAt })
+        .from(schema.promptHistory)
+        .where(eq(schema.promptHistory.sessionId, input.sessionId))
+        .orderBy(desc(schema.promptHistory.createdAt))
+        .limit(input.limit)
+        .all();
+      return rows.reverse(); // 오래된 것이 앞에 오도록
     }),
 
   // ── M2-03: 세션 이름 변경 ──────────────────────────────────────────────
   rename: publicProcedure
     .input(z.object({ sessionId: z.string(), name: z.string().min(1).max(30) }))
     .mutation(({ input }) => {
-      const db = getDatabaseManager().getDb();
-      db.prepare('UPDATE sessions SET name = ? WHERE id = ?').run(input.name, input.sessionId);
-      const row = db.prepare('SELECT * FROM sessions WHERE id = ?').get(input.sessionId) as SessionRow | undefined;
+      const drizzle = getDatabaseManager().drizzle;
+      drizzle.update(schema.sessions)
+        .set({ name: input.name })
+        .where(eq(schema.sessions.id, input.sessionId))
+        .run();
+      const [row] = drizzle.select().from(schema.sessions).where(eq(schema.sessions.id, input.sessionId)).all();
       if (!row) throw new Error(`Session ${input.sessionId} not found`);
-      return rowToSession(row);
+      return rowToSession(row as unknown as SessionRow);
     }),
 
   // ── M2-06: 즐겨찾기 토글 ──────────────────────────────────────────────
   setFavorite: publicProcedure
     .input(z.object({ sessionId: z.string(), favorite: z.boolean() }))
     .mutation(({ input }) => {
-      const db = getDatabaseManager().getDb();
-      db.prepare('UPDATE sessions SET is_favorite = ? WHERE id = ?').run(input.favorite ? 1 : 0, input.sessionId);
-      const row = db.prepare('SELECT * FROM sessions WHERE id = ?').get(input.sessionId) as SessionRow | undefined;
+      const drizzle = getDatabaseManager().drizzle;
+      drizzle.update(schema.sessions)
+        .set({ isFavorite: input.favorite })
+        .where(eq(schema.sessions.id, input.sessionId))
+        .run();
+      const [row] = drizzle.select().from(schema.sessions).where(eq(schema.sessions.id, input.sessionId)).all();
       if (!row) throw new Error(`Session ${input.sessionId} not found`);
-      return rowToSession(row);
+      return rowToSession(row as unknown as SessionRow);
     }),
 
   // ── M3-01: 세션 비용 조회 ─────────────────────────────────────────────
@@ -1214,21 +1339,22 @@ export const sessionRouter = router({
       if (state) return state.costs;
 
       // 인메모리에 없으면 DB에서 합산
-      const db = getDatabaseManager().getDb();
-      const row = db
-        .prepare(
-          `SELECT COALESCE(SUM(input_tokens), 0) as input_tokens,
-                  COALESCE(SUM(output_tokens), 0) as output_tokens,
-                  COALESCE(SUM(cost_usd), 0) as cost_usd
-           FROM session_costs WHERE session_id = ?`,
-        )
-        .get(input.sessionId) as { input_tokens: number; output_tokens: number; cost_usd: number };
+      const drizzle = getDatabaseManager().drizzle;
+      const [row] = drizzle
+        .select({
+          inputTokens: drizzleSql<number>`COALESCE(SUM(${schema.sessionCosts.inputTokens}), 0)`,
+          outputTokens: drizzleSql<number>`COALESCE(SUM(${schema.sessionCosts.outputTokens}), 0)`,
+          costUsd: drizzleSql<number>`COALESCE(SUM(${schema.sessionCosts.costUsd}), 0)`,
+        })
+        .from(schema.sessionCosts)
+        .where(eq(schema.sessionCosts.sessionId, input.sessionId))
+        .all();
 
       return {
         sessionId: input.sessionId,
-        totalInputTokens: row.input_tokens,
-        totalOutputTokens: row.output_tokens,
-        totalCostUsd: row.cost_usd,
+        totalInputTokens: row?.inputTokens ?? 0,
+        totalOutputTokens: row?.outputTokens ?? 0,
+        totalCostUsd: row?.costUsd ?? 0,
       };
     }),
 
@@ -1280,24 +1406,28 @@ export const sessionRouter = router({
   setPipeline: publicProcedure
     .input(z.object({ sessionId: z.string(), dependsOnSessionId: z.string().nullable() }))
     .mutation(({ input }) => {
-      const db = getDatabaseManager().getDb();
-      db.prepare('UPDATE sessions SET depends_on_session_id = ? WHERE id = ?')
-        .run(input.dependsOnSessionId, input.sessionId);
-      const row = db.prepare('SELECT * FROM sessions WHERE id = ?').get(input.sessionId) as SessionRow | undefined;
+      const drizzle = getDatabaseManager().drizzle;
+      drizzle.update(schema.sessions)
+        .set({ dependsOnSessionId: input.dependsOnSessionId })
+        .where(eq(schema.sessions.id, input.sessionId))
+        .run();
+      const [row] = drizzle.select().from(schema.sessions).where(eq(schema.sessions.id, input.sessionId)).all();
       if (!row) throw new Error(`Session ${input.sessionId} not found`);
-      return rowToSession(row);
+      return rowToSession(row as unknown as SessionRow);
     }),
 
   // ── M4-02: 컨텍스트 소스 설정 ────────────────────────────────────────
   setContextSource: publicProcedure
     .input(z.object({ sessionId: z.string(), contextSourceSessionId: z.string().nullable() }))
     .mutation(({ input }) => {
-      const db = getDatabaseManager().getDb();
-      db.prepare('UPDATE sessions SET context_source_session_id = ? WHERE id = ?')
-        .run(input.contextSourceSessionId, input.sessionId);
-      const row = db.prepare('SELECT * FROM sessions WHERE id = ?').get(input.sessionId) as SessionRow | undefined;
+      const drizzle = getDatabaseManager().drizzle;
+      drizzle.update(schema.sessions)
+        .set({ contextSourceSessionId: input.contextSourceSessionId })
+        .where(eq(schema.sessions.id, input.sessionId))
+        .run();
+      const [row] = drizzle.select().from(schema.sessions).where(eq(schema.sessions.id, input.sessionId)).all();
       if (!row) throw new Error(`Session ${input.sessionId} not found`);
-      return rowToSession(row);
+      return rowToSession(row as unknown as SessionRow);
     }),
 
   getContextOutput: publicProcedure
@@ -1306,10 +1436,12 @@ export const sessionRouter = router({
       const ptyManager = getPtyManager();
       const scrollback = ptyManager.getScrollback(input.sessionId);
       if (!scrollback) {
-        const db = getDatabaseManager().getDb();
-        const row = db
-          .prepare('SELECT data FROM session_scrollbacks WHERE session_id = ?')
-          .get(input.sessionId) as { data: string } | undefined;
+        const drizzle = getDatabaseManager().drizzle;
+        const [row] = drizzle
+          .select({ data: schema.sessionScrollbacks.data })
+          .from(schema.sessionScrollbacks)
+          .where(eq(schema.sessionScrollbacks.sessionId, input.sessionId))
+          .all();
         const data = row?.data ?? '';
         const lines = data.split('\n').slice(-input.lines).join('\n');
         return lines.slice(0, 4000);
@@ -1320,18 +1452,23 @@ export const sessionRouter = router({
 
   // ── M4-03: 일괄 제어 ────────────────────────────────────────────────
   stopAll: publicProcedure.mutation(() => {
-    const db = getDatabaseManager().getDb();
+    const drizzle = getDatabaseManager().drizzle;
     const ptyManager = getPtyManager();
-    const running = db
-      .prepare(`SELECT * FROM sessions WHERE status = 'running'`)
-      .all() as SessionRow[];
+    const running = drizzle
+      .select()
+      .from(schema.sessions)
+      .where(eq(schema.sessions.status, 'running'))
+      .all();
     let stopped = 0;
     for (const row of running) {
       try {
         if (ptyManager.isAlive(row.id)) {
           ptyManager.kill(row.id);
         }
-        db.prepare('UPDATE sessions SET status = ?, pid = NULL WHERE id = ?').run('stopped', row.id);
+        drizzle.update(schema.sessions)
+          .set({ status: 'stopped', pid: null })
+          .where(eq(schema.sessions.id, row.id))
+          .run();
         stopped++;
       } catch {
         // 개별 실패 무시
@@ -1341,13 +1478,18 @@ export const sessionRouter = router({
   }),
 
   restartAllErrors: publicProcedure.mutation(() => {
-    const db = getDatabaseManager().getDb();
-    const errored = db
-      .prepare(`SELECT * FROM sessions WHERE status = 'error'`)
-      .all() as SessionRow[];
+    const drizzle = getDatabaseManager().drizzle;
+    const errored = drizzle
+      .select()
+      .from(schema.sessions)
+      .where(eq(schema.sessions.status, 'error'))
+      .all();
     let restarted = 0;
     for (const row of errored) {
-      db.prepare('UPDATE sessions SET status = ?, pid = NULL WHERE id = ?').run('pending', row.id);
+      drizzle.update(schema.sessions)
+        .set({ status: 'pending', pid: null })
+        .where(eq(schema.sessions.id, row.id))
+        .run();
       restarted++;
     }
     // 상태 변경을 렌더러에 알림
@@ -1364,34 +1506,42 @@ export const sessionRouter = router({
   addLabel: publicProcedure
     .input(z.object({ sessionId: z.string(), labelName: z.string().min(1).max(20), labelColor: z.string() }))
     .mutation(({ input }) => {
-      const db = getDatabaseManager().getDb();
-      db.prepare(
-        `INSERT OR REPLACE INTO session_labels (session_id, label_name, label_color) VALUES (?, ?, ?)`
-      ).run(input.sessionId, input.labelName, input.labelColor);
+      const drizzle = getDatabaseManager().drizzle;
+      drizzle.insert(schema.sessionLabels)
+        .values({ sessionId: input.sessionId, labelName: input.labelName, labelColor: input.labelColor })
+        .onConflictDoUpdate({
+          target: [schema.sessionLabels.sessionId, schema.sessionLabels.labelName],
+          set: { labelColor: input.labelColor },
+        })
+        .run();
       return { sessionId: input.sessionId, labelName: input.labelName, labelColor: input.labelColor };
     }),
 
   removeLabel: publicProcedure
     .input(z.object({ sessionId: z.string(), labelName: z.string() }))
     .mutation(({ input }) => {
-      const db = getDatabaseManager().getDb();
-      db.prepare('DELETE FROM session_labels WHERE session_id = ? AND label_name = ?')
-        .run(input.sessionId, input.labelName);
+      const drizzle = getDatabaseManager().drizzle;
+      drizzle.delete(schema.sessionLabels)
+        .where(and(eq(schema.sessionLabels.sessionId, input.sessionId), eq(schema.sessionLabels.labelName, input.labelName)))
+        .run();
     }),
 
   getLabels: publicProcedure
     .input(z.object({ sessionId: z.string() }))
     .query(({ input }) => {
-      const db = getDatabaseManager().getDb();
-      return (db
-        .prepare('SELECT * FROM session_labels WHERE session_id = ?')
-        .all(input.sessionId) as LabelRow[])
-        .map(rowToLabel);
+      const drizzle = getDatabaseManager().drizzle;
+      return drizzle
+        .select()
+        .from(schema.sessionLabels)
+        .where(eq(schema.sessionLabels.sessionId, input.sessionId))
+        .all()
+        .map((row) => ({ sessionId: row.sessionId, labelName: row.labelName, labelColor: row.labelColor }));
     }),
 
   listByLabel: publicProcedure
     .input(z.object({ labelName: z.string() }))
     .query(({ input }) => {
+      // JOIN 쿼리 — raw SQL 유지
       const db = getDatabaseManager().getDb();
       return (db
         .prepare(
@@ -1410,8 +1560,7 @@ export const sessionRouter = router({
     .mutation(({ input }) => {
       const db = getDatabaseManager().getDb();
       // settingsStore의 sessionGcDays는 renderer 측이므로 기본 30일 사용.
-      // 실제로는 클라이언트에서 호출 시 days를 함께 전달할 수도 있지만,
-      // DB에서 N일 이전 비활성 세션(stopped/error)을 찾아 아카이브한다.
+      // datetime 비교는 raw SQL 유지 (drizzle의 sqlite datetime 함수 미지원)
       const cutoffDays = 30;
       const rows = db
         .prepare(
@@ -1429,8 +1578,11 @@ export const sessionRouter = router({
 
       // soft delete: status → 'archived'
       if (ids.length > 0) {
-        const placeholders = ids.map(() => '?').join(',');
-        db.prepare(`UPDATE sessions SET status = 'archived' WHERE id IN (${placeholders})`).run(...ids);
+        const drizzle = getDatabaseManager().drizzle;
+        drizzle.update(schema.sessions)
+          .set({ status: 'archived' })
+          .where(inArray(schema.sessions.id, ids))
+          .run();
       }
       return { archivedCount: ids.length, archivedIds: ids };
     }),
@@ -1438,8 +1590,11 @@ export const sessionRouter = router({
   archive: publicProcedure
     .input(z.object({ sessionId: z.string() }))
     .mutation(({ input }) => {
-      const db = getDatabaseManager().getDb();
-      db.prepare(`UPDATE sessions SET status = 'archived' WHERE id = ?`).run(input.sessionId);
+      const drizzle = getDatabaseManager().drizzle;
+      drizzle.update(schema.sessions)
+        .set({ status: 'archived' })
+        .where(eq(schema.sessions.id, input.sessionId))
+        .run();
       return { success: true };
     }),
 
@@ -1452,12 +1607,17 @@ export const sessionRouter = router({
       includeAnsi: z.boolean().default(false),
     }))
     .mutation(async ({ input }) => {
-      const db = getDatabaseManager().getDb();
-      const session = db.prepare('SELECT * FROM sessions WHERE id = ?').get(input.sessionId) as SessionRow | undefined;
-      if (!session) throw new Error(`Session ${input.sessionId} not found`);
+      const drizzle = getDatabaseManager().drizzle;
+      const [sessionRow] = drizzle.select().from(schema.sessions).where(eq(schema.sessions.id, input.sessionId)).all();
+      if (!sessionRow) throw new Error(`Session ${input.sessionId} not found`);
+      const session = sessionRow as unknown as SessionRow;
 
       // scrollback 데이터 추출
-      const scrollbackRow = db.prepare('SELECT data FROM session_scrollbacks WHERE session_id = ?').get(input.sessionId) as { data: string } | undefined;
+      const [scrollbackRow] = drizzle
+        .select({ data: schema.sessionScrollbacks.data })
+        .from(schema.sessionScrollbacks)
+        .where(eq(schema.sessionScrollbacks.sessionId, input.sessionId))
+        .all();
       let content = scrollbackRow?.data ?? '';
 
       // ANSI 코드 제거 (txt/json 또는 includeAnsi=false 시)
@@ -1549,12 +1709,16 @@ export const sessionRouter = router({
 
           if (matchingLines.length > 0) {
             // DB에서 세션 이름 조회
-            const db = getDatabaseManager().getDb();
-            const session = db.prepare('SELECT name FROM sessions WHERE id = ?').get(sessionId) as { name: string } | undefined;
+            const drizzle = getDatabaseManager().drizzle;
+            const [sessionNameRow] = drizzle
+              .select({ name: schema.sessions.name })
+              .from(schema.sessions)
+              .where(eq(schema.sessions.id, sessionId))
+              .all();
 
             results.push({
               sessionId,
-              sessionName: session?.name ?? sessionId,
+              sessionName: sessionNameRow?.name ?? sessionId,
               date: stat.mtime.toISOString(),
               matchingLines,
             });
@@ -1572,11 +1736,21 @@ export const sessionRouter = router({
 
 export const presetRouter = router({
   list: publicProcedure.query(() => {
-    const db = getDatabaseManager().getDb();
-    return (db
-      .prepare('SELECT * FROM agent_presets ORDER BY created_at DESC')
-      .all() as PresetRow[])
-      .map(rowToPreset);
+    const drizzle = getDatabaseManager().drizzle;
+    return drizzle
+      .select()
+      .from(schema.agentPresets)
+      .orderBy(desc(schema.agentPresets.createdAt))
+      .all()
+      .map((row) => ({
+        id: row.id,
+        name: row.name,
+        agentId: row.agentId,
+        workspaceId: row.workspaceId,
+        initialCommand: row.initialCommand,
+        envVars: JSON.parse(row.envVars) as Record<string, string>,
+        createdAt: row.createdAt,
+      }));
   }),
 
   create: publicProcedure
@@ -1588,14 +1762,26 @@ export const presetRouter = router({
       envVars: z.record(z.string(), z.string()).default({}),
     }))
     .mutation(({ input }) => {
-      const db = getDatabaseManager().getDb();
+      const drizzle = getDatabaseManager().drizzle;
       const id = uuidv4();
-      db.prepare(
-        `INSERT INTO agent_presets (id, name, agent_id, workspace_id, initial_command, env_vars) VALUES (?, ?, ?, ?, ?, ?)`
-      ).run(id, input.name, input.agentId, input.workspaceId, input.initialCommand, JSON.stringify(input.envVars));
-      return rowToPreset(
-        db.prepare('SELECT * FROM agent_presets WHERE id = ?').get(id) as PresetRow
-      );
+      drizzle.insert(schema.agentPresets).values({
+        id,
+        name: input.name,
+        agentId: input.agentId,
+        workspaceId: input.workspaceId,
+        initialCommand: input.initialCommand,
+        envVars: JSON.stringify(input.envVars),
+      }).run();
+      const [row] = drizzle.select().from(schema.agentPresets).where(eq(schema.agentPresets.id, id)).all();
+      return {
+        id: row.id,
+        name: row.name,
+        agentId: row.agentId,
+        workspaceId: row.workspaceId,
+        initialCommand: row.initialCommand,
+        envVars: JSON.parse(row.envVars) as Record<string, string>,
+        createdAt: row.createdAt,
+      };
     }),
 
   update: publicProcedure
@@ -1608,27 +1794,33 @@ export const presetRouter = router({
       envVars: z.record(z.string(), z.string()).optional(),
     }))
     .mutation(({ input }) => {
-      const db = getDatabaseManager().getDb();
-      const fields: string[] = [];
-      const values: unknown[] = [];
-      if (input.name !== undefined) { fields.push('name = ?'); values.push(input.name); }
-      if (input.agentId !== undefined) { fields.push('agent_id = ?'); values.push(input.agentId); }
-      if (input.workspaceId !== undefined) { fields.push('workspace_id = ?'); values.push(input.workspaceId); }
-      if (input.initialCommand !== undefined) { fields.push('initial_command = ?'); values.push(input.initialCommand); }
-      if (input.envVars !== undefined) { fields.push('env_vars = ?'); values.push(JSON.stringify(input.envVars)); }
-      if (fields.length > 0) {
-        db.prepare(`UPDATE agent_presets SET ${fields.join(', ')} WHERE id = ?`).run(...values, input.id);
+      const drizzle = getDatabaseManager().drizzle;
+      const updateFields: Partial<typeof schema.agentPresets.$inferInsert> = {};
+      if (input.name !== undefined) updateFields.name = input.name;
+      if (input.agentId !== undefined) updateFields.agentId = input.agentId;
+      if (input.workspaceId !== undefined) updateFields.workspaceId = input.workspaceId;
+      if (input.initialCommand !== undefined) updateFields.initialCommand = input.initialCommand;
+      if (input.envVars !== undefined) updateFields.envVars = JSON.stringify(input.envVars);
+      if (Object.keys(updateFields).length > 0) {
+        drizzle.update(schema.agentPresets).set(updateFields).where(eq(schema.agentPresets.id, input.id)).run();
       }
-      return rowToPreset(
-        db.prepare('SELECT * FROM agent_presets WHERE id = ?').get(input.id) as PresetRow
-      );
+      const [row] = drizzle.select().from(schema.agentPresets).where(eq(schema.agentPresets.id, input.id)).all();
+      return {
+        id: row.id,
+        name: row.name,
+        agentId: row.agentId,
+        workspaceId: row.workspaceId,
+        initialCommand: row.initialCommand,
+        envVars: JSON.parse(row.envVars) as Record<string, string>,
+        createdAt: row.createdAt,
+      };
     }),
 
   delete: publicProcedure
     .input(z.object({ id: z.string() }))
     .mutation(({ input }) => {
-      const db = getDatabaseManager().getDb();
-      db.prepare('DELETE FROM agent_presets WHERE id = ?').run(input.id);
+      const drizzle = getDatabaseManager().drizzle;
+      drizzle.delete(schema.agentPresets).where(eq(schema.agentPresets.id, input.id)).run();
     }),
 
   launch: publicProcedure
@@ -1638,43 +1830,44 @@ export const presetRouter = router({
       rows: z.number().int().positive(),
     }))
     .mutation(async ({ input }) => {
-      const db = getDatabaseManager().getDb();
+      const drizzle = getDatabaseManager().drizzle;
       const ptyManager = getPtyManager();
-      const preset = db.prepare('SELECT * FROM agent_presets WHERE id = ?').get(input.presetId) as PresetRow | undefined;
-      if (!preset) throw new Error(`Preset ${input.presetId} not found`);
+      const [presetRow] = drizzle.select().from(schema.agentPresets).where(eq(schema.agentPresets.id, input.presetId)).all();
+      if (!presetRow) throw new Error(`Preset ${input.presetId} not found`);
 
-      const workspace = db
-        .prepare('SELECT * FROM workspaces WHERE id = ?')
-        .get(preset.workspace_id) as Record<string, unknown> | undefined;
-      if (!workspace) throw new Error(`Workspace ${preset.workspace_id} not found`);
+      const [workspaceRow] = drizzle.select().from(schema.workspaces).where(eq(schema.workspaces.id, presetRow.workspaceId)).all();
+      if (!workspaceRow) throw new Error(`Workspace ${presetRow.workspaceId} not found`);
 
-      const agent = db
-        .prepare('SELECT * FROM agents WHERE id = ?')
-        .get(preset.agent_id) as Record<string, unknown> | undefined;
-      if (!agent) throw new Error(`Agent ${preset.agent_id} not found`);
+      const [agentRow] = drizzle.select().from(schema.agents).where(eq(schema.agents.id, presetRow.agentId)).all();
+      if (!agentRow) throw new Error(`Agent ${presetRow.agentId} not found`);
 
       // 세션 생성
       const sessionId = uuidv4();
-      db.prepare(
-        `INSERT INTO sessions (id, name, workspace_id, agent_id, status, pid) VALUES (?, ?, ?, ?, 'pending', NULL)`
-      ).run(sessionId, `${preset.name}`, preset.workspace_id, preset.agent_id);
+      drizzle.insert(schema.sessions).values({
+        id: sessionId,
+        name: presetRow.name,
+        workspaceId: presetRow.workspaceId,
+        agentId: presetRow.agentId,
+        status: 'pending',
+        pid: null,
+      }).run();
 
-      // 환경변수 병합
+      // 환경변수 병합 — JOIN 쿼리는 raw SQL 유지
       interface EnvVarRow { key: string; value: string; }
-      const envVarRows = db
+      const envVarRows = getDatabaseManager().getDb()
         .prepare(
           `SELECT ev.key, ev.value FROM env_vars ev
            JOIN repositories r ON r.id = ev.repository_id
            JOIN workspaces w ON w.repository_id = r.id
            WHERE w.id = ?`
         )
-        .all(preset.workspace_id) as EnvVarRow[];
+        .all(presetRow.workspaceId) as EnvVarRow[];
       const repoEnv: Record<string, string> = {};
       for (const row of envVarRows) repoEnv[row.key] = row.value;
 
-      const agentArgs: string[] = JSON.parse(agent.args as string);
-      const agentEnv: Record<string, string> = JSON.parse(agent.env as string);
-      const presetEnv: Record<string, string> = JSON.parse(preset.env_vars);
+      const agentArgs: string[] = JSON.parse(agentRow.args);
+      const agentEnv: Record<string, string> = JSON.parse(agentRow.env);
+      const presetEnv: Record<string, string> = JSON.parse(presetRow.envVars);
       const mergedEnv = { ...repoEnv, ...agentEnv, ...presetEnv };
 
       const intelligence = getSessionIntelligence();
@@ -1682,10 +1875,10 @@ export const presetRouter = router({
 
       const ptyProcess = ptyManager.create(
         sessionId,
-        agent.command as string,
+        agentRow.command,
         agentArgs,
         mergedEnv,
-        workspace.worktree_path as string,
+        workspaceRow.worktreePath,
         input.cols,
         input.rows,
       );
@@ -1703,15 +1896,19 @@ export const presetRouter = router({
         ptyManager.removeExit(sid);
         intelligence.handleExit(sid, exitCode);
         const status = exitCode === 0 ? 'stopped' : 'error';
-        // M7-04: exit code를 DB에 저장
-        db.prepare('UPDATE sessions SET status = ?, pid = NULL, last_exit_code = ? WHERE id = ?').run(status, exitCode ?? null, sid);
+        drizzle.update(schema.sessions)
+          .set({ status, pid: null, lastExitCode: exitCode ?? null })
+          .where(eq(schema.sessions.id, sid))
+          .run();
         const scrollback = ptyManager.getScrollback(sid);
         if (scrollback) {
-          db.prepare(`
-            INSERT INTO session_scrollbacks (session_id, data, updated_at)
-            VALUES (?, ?, datetime('now'))
-            ON CONFLICT(session_id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at
-          `).run(sid, scrollback);
+          drizzle.insert(schema.sessionScrollbacks)
+            .values({ sessionId: sid, data: scrollback })
+            .onConflictDoUpdate({
+              target: schema.sessionScrollbacks.sessionId,
+              set: { data: scrollback, updatedAt: drizzleSql`datetime('now')` },
+            })
+            .run();
         }
         const win = getMainWindow();
         if (win && !win.isDestroyed()) {
@@ -1719,20 +1916,22 @@ export const presetRouter = router({
         }
       });
 
-      db.prepare('UPDATE sessions SET status = ?, pid = ? WHERE id = ?').run('running', ptyProcess.pid, sessionId);
+      drizzle.update(schema.sessions)
+        .set({ status: 'running', pid: ptyProcess.pid })
+        .where(eq(schema.sessions.id, sessionId))
+        .run();
 
       // 초기 커맨드가 있으면 전송
-      if (preset.initial_command.trim()) {
+      if (presetRow.initialCommand.trim()) {
         setTimeout(() => {
           try {
-            ptyManager.write(sessionId, preset.initial_command + '\r');
+            ptyManager.write(sessionId, presetRow.initialCommand + '\r');
           } catch { /* 무시 */ }
         }, 500);
       }
 
-      return rowToSession(
-        db.prepare('SELECT * FROM sessions WHERE id = ?').get(sessionId) as SessionRow
-      );
+      const [sessionFinal] = drizzle.select().from(schema.sessions).where(eq(schema.sessions.id, sessionId)).all();
+      return rowToSession(sessionFinal as unknown as SessionRow);
     }),
 });
 
@@ -1766,11 +1965,23 @@ function rowToTemplate(row: TemplateRow) {
 
 export const templateRouter = router({
   list: publicProcedure.query(() => {
-    const db = getDatabaseManager().getDb();
-    return (db
-      .prepare('SELECT * FROM workspace_templates ORDER BY created_at DESC')
-      .all() as TemplateRow[])
-      .map(rowToTemplate);
+    const drizzle = getDatabaseManager().drizzle;
+    return drizzle
+      .select()
+      .from(schema.workspaceTemplates)
+      .orderBy(desc(schema.workspaceTemplates.createdAt))
+      .all()
+      .map((row) => ({
+        id: row.id,
+        name: row.name,
+        description: row.description,
+        agentType: row.agentType,
+        envVars: JSON.parse(row.envVars) as Record<string, string>,
+        setupScript: row.setupScript,
+        teardownScript: row.teardownScript,
+        branchPattern: row.branchPattern,
+        createdAt: row.createdAt,
+      }));
   }),
 
   create: publicProcedure
@@ -1784,60 +1995,74 @@ export const templateRouter = router({
       branchPattern: z.string().default(''),
     }))
     .mutation(({ input }) => {
-      const db = getDatabaseManager().getDb();
+      const drizzle = getDatabaseManager().drizzle;
       const id = uuidv4();
-      db.prepare(
-        `INSERT INTO workspace_templates (id, name, description, agent_type, env_vars, setup_script, teardown_script, branch_pattern)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-      ).run(id, input.name, input.description, input.agentType, JSON.stringify(input.envVars), input.setupScript, input.teardownScript, input.branchPattern);
-      return rowToTemplate(
-        db.prepare('SELECT * FROM workspace_templates WHERE id = ?').get(id) as TemplateRow
-      );
+      drizzle.insert(schema.workspaceTemplates).values({
+        id,
+        name: input.name,
+        description: input.description,
+        agentType: input.agentType,
+        envVars: JSON.stringify(input.envVars),
+        setupScript: input.setupScript,
+        teardownScript: input.teardownScript,
+        branchPattern: input.branchPattern,
+      }).run();
+      const [row] = drizzle.select().from(schema.workspaceTemplates).where(eq(schema.workspaceTemplates.id, id)).all();
+      return {
+        id: row.id,
+        name: row.name,
+        description: row.description,
+        agentType: row.agentType,
+        envVars: JSON.parse(row.envVars) as Record<string, string>,
+        setupScript: row.setupScript,
+        teardownScript: row.teardownScript,
+        branchPattern: row.branchPattern,
+        createdAt: row.createdAt,
+      };
     }),
 
   delete: publicProcedure
     .input(z.object({ id: z.string() }))
     .mutation(({ input }) => {
-      const db = getDatabaseManager().getDb();
-      db.prepare('DELETE FROM workspace_templates WHERE id = ?').run(input.id);
+      const drizzle = getDatabaseManager().drizzle;
+      drizzle.delete(schema.workspaceTemplates).where(eq(schema.workspaceTemplates.id, input.id)).run();
     }),
 
   applyToWorkspace: publicProcedure
     .input(z.object({ templateId: z.string(), workspaceId: z.string() }))
     .mutation(({ input }) => {
-      const db = getDatabaseManager().getDb();
-      const tpl = db.prepare('SELECT * FROM workspace_templates WHERE id = ?').get(input.templateId) as TemplateRow | undefined;
+      const drizzle = getDatabaseManager().drizzle;
+      const [tpl] = drizzle.select().from(schema.workspaceTemplates).where(eq(schema.workspaceTemplates.id, input.templateId)).all();
       if (!tpl) throw new Error(`Template ${input.templateId} not found`);
 
-      const workspace = db
-        .prepare('SELECT * FROM workspaces WHERE id = ?')
-        .get(input.workspaceId) as Record<string, unknown> | undefined;
+      const [workspace] = drizzle.select().from(schema.workspaces).where(eq(schema.workspaces.id, input.workspaceId)).all();
       if (!workspace) throw new Error(`Workspace ${input.workspaceId} not found`);
 
-      const repoId = workspace.repository_id as string;
+      const repoId = workspace.repositoryId;
 
       // 템플릿 env_vars를 repo의 env_vars에 병합
-      const tplEnvVars = JSON.parse(tpl.env_vars) as Record<string, string>;
-      const insertEnv = db.prepare(
-        `INSERT INTO env_vars (id, repository_id, key, value)
-         VALUES (?, ?, ?, ?)
-         ON CONFLICT(repository_id, key) DO UPDATE SET value = excluded.value`
-      );
+      const tplEnvVars = JSON.parse(tpl.envVars) as Record<string, string>;
       for (const [key, value] of Object.entries(tplEnvVars)) {
-        insertEnv.run(uuidv4(), repoId, key, value);
+        drizzle.insert(schema.envVars)
+          .values({ id: uuidv4(), repositoryId: repoId, key, value })
+          .onConflictDoUpdate({
+            target: [schema.envVars.repositoryId, schema.envVars.key],
+            set: { value },
+          })
+          .run();
       }
 
       // 템플릿의 setup/teardown script를 repo에 적용 (비어있지 않으면)
-      if (tpl.setup_script) {
-        db.prepare('UPDATE repositories SET setup_script = ? WHERE id = ?').run(tpl.setup_script, repoId);
+      if (tpl.setupScript) {
+        drizzle.update(schema.repositories).set({ setupScript: tpl.setupScript }).where(eq(schema.repositories.id, repoId)).run();
       }
-      if (tpl.teardown_script) {
-        db.prepare('UPDATE repositories SET teardown_script = ? WHERE id = ?').run(tpl.teardown_script, repoId);
+      if (tpl.teardownScript) {
+        drizzle.update(schema.repositories).set({ teardownScript: tpl.teardownScript }).where(eq(schema.repositories.id, repoId)).run();
       }
 
       // 템플릿의 branch_pattern을 repo의 branch_prefix에 적용
-      if (tpl.branch_pattern) {
-        db.prepare('UPDATE repositories SET branch_prefix = ? WHERE id = ?').run(tpl.branch_pattern, repoId);
+      if (tpl.branchPattern) {
+        drizzle.update(schema.repositories).set({ branchPrefix: tpl.branchPattern }).where(eq(schema.repositories.id, repoId)).run();
       }
 
       return { success: true };
@@ -1848,11 +2073,22 @@ export const templateRouter = router({
 
 export const agentRouter = router({
   list: publicProcedure.query(() => {
-    const db = getDatabaseManager().getDb();
-    return db
-      .prepare('SELECT * FROM agents ORDER BY is_built_in DESC, name')
+    const drizzle = getDatabaseManager().drizzle;
+    return drizzle
+      .select()
+      .from(schema.agents)
+      .orderBy(desc(schema.agents.isBuiltIn), asc(schema.agents.name))
       .all()
-      .map((r) => rowToAgent(r as Record<string, unknown>));
+      .map((row) => ({
+        id: row.id,
+        name: row.name,
+        command: row.command,
+        args: JSON.parse(row.args) as string[],
+        env: JSON.parse(row.env) as Record<string, string>,
+        isBuiltIn: row.isBuiltIn,
+        scriptPath: row.scriptPath ?? null,
+        scriptContent: row.scriptContent ?? null,
+      }));
   }),
 
   create: publicProcedure
@@ -1867,22 +2103,29 @@ export const agentRouter = router({
       })
     )
     .mutation(({ input }) => {
-      const db = getDatabaseManager().getDb();
+      const drizzle = getDatabaseManager().drizzle;
       const id = uuidv4();
-      db.prepare(
-        `INSERT INTO agents (id, name, command, args, env, is_built_in, script_path, script_content) VALUES (?, ?, ?, ?, ?, 0, ?, ?)`
-      ).run(
+      drizzle.insert(schema.agents).values({
         id,
-        input.name,
-        input.command,
-        JSON.stringify(input.args),
-        JSON.stringify(input.env),
-        input.scriptPath ?? null,
-        input.scriptContent ?? null,
-      );
-      return rowToAgent(
-        db.prepare('SELECT * FROM agents WHERE id = ?').get(id) as Record<string, unknown>
-      );
+        name: input.name,
+        command: input.command,
+        args: JSON.stringify(input.args),
+        env: JSON.stringify(input.env),
+        isBuiltIn: false,
+        scriptPath: input.scriptPath ?? null,
+        scriptContent: input.scriptContent ?? null,
+      }).run();
+      const [row] = drizzle.select().from(schema.agents).where(eq(schema.agents.id, id)).all();
+      return {
+        id: row.id,
+        name: row.name,
+        command: row.command,
+        args: JSON.parse(row.args) as string[],
+        env: JSON.parse(row.env) as Record<string, string>,
+        isBuiltIn: row.isBuiltIn,
+        scriptPath: row.scriptPath ?? null,
+        scriptContent: row.scriptContent ?? null,
+      };
     }),
 
   update: publicProcedure
@@ -1898,43 +2141,55 @@ export const agentRouter = router({
       })
     )
     .mutation(({ input }) => {
-      const db = getDatabaseManager().getDb();
-      const agent = db
-        .prepare('SELECT is_built_in FROM agents WHERE id = ?')
-        .get(input.id) as { is_built_in: number } | undefined;
+      const drizzle = getDatabaseManager().drizzle;
+      const [agent] = drizzle
+        .select({ isBuiltIn: schema.agents.isBuiltIn })
+        .from(schema.agents)
+        .where(eq(schema.agents.id, input.id))
+        .all();
 
       if (!agent) throw new Error(`Agent ${input.id} not found`);
-      if (agent.is_built_in) throw new Error('Cannot modify built-in agents');
+      if (agent.isBuiltIn) throw new Error('Cannot modify built-in agents');
 
-      db.prepare(
-        `UPDATE agents SET name = ?, command = ?, args = ?, env = ?, script_path = ?, script_content = ? WHERE id = ?`
-      ).run(
-        input.name,
-        input.command,
-        JSON.stringify(input.args),
-        JSON.stringify(input.env),
-        input.scriptPath ?? null,
-        input.scriptContent ?? null,
-        input.id
-      );
+      drizzle.update(schema.agents)
+        .set({
+          name: input.name,
+          command: input.command,
+          args: JSON.stringify(input.args),
+          env: JSON.stringify(input.env),
+          scriptPath: input.scriptPath ?? null,
+          scriptContent: input.scriptContent ?? null,
+        })
+        .where(eq(schema.agents.id, input.id))
+        .run();
 
-      return rowToAgent(
-        db.prepare('SELECT * FROM agents WHERE id = ?').get(input.id) as Record<string, unknown>
-      );
+      const [row] = drizzle.select().from(schema.agents).where(eq(schema.agents.id, input.id)).all();
+      return {
+        id: row.id,
+        name: row.name,
+        command: row.command,
+        args: JSON.parse(row.args) as string[],
+        env: JSON.parse(row.env) as Record<string, string>,
+        isBuiltIn: row.isBuiltIn,
+        scriptPath: row.scriptPath ?? null,
+        scriptContent: row.scriptContent ?? null,
+      };
     }),
 
   delete: publicProcedure
     .input(z.object({ id: z.string() }))
     .mutation(({ input }) => {
-      const db = getDatabaseManager().getDb();
-      const agent = db
-        .prepare('SELECT is_built_in FROM agents WHERE id = ?')
-        .get(input.id) as { is_built_in: number } | undefined;
+      const drizzle = getDatabaseManager().drizzle;
+      const [agent] = drizzle
+        .select({ isBuiltIn: schema.agents.isBuiltIn })
+        .from(schema.agents)
+        .where(eq(schema.agents.id, input.id))
+        .all();
 
       if (!agent) throw new Error(`Agent ${input.id} not found`);
-      if (agent.is_built_in) throw new Error('Cannot delete built-in agents');
+      if (agent.isBuiltIn) throw new Error('Cannot delete built-in agents');
 
-      db.prepare('DELETE FROM agents WHERE id = ?').run(input.id);
+      drizzle.delete(schema.agents).where(eq(schema.agents.id, input.id)).run();
     }),
 });
 
@@ -1942,17 +2197,30 @@ export const agentRouter = router({
 
 export const repositoryRouter = router({
   list: publicProcedure.query(() => {
-    const db = getDatabaseManager().getDb();
-    return db
-      .prepare('SELECT * FROM repositories ORDER BY created_at')
+    const drizzle = getDatabaseManager().drizzle;
+    return drizzle
+      .select()
+      .from(schema.repositories)
+      .orderBy(asc(schema.repositories.createdAt))
       .all()
-      .map((r) => rowToRepo(r as Record<string, unknown>));
+      .map((row) => ({
+        id: row.id,
+        name: row.name,
+        path: row.path,
+        color: row.color,
+        branchPrefix: row.branchPrefix,
+        baseBranch: row.baseBranch,
+        worktreeBasePath: row.worktreeBasePath,
+        setupScript: row.setupScript,
+        teardownScript: row.teardownScript,
+        createdAt: row.createdAt,
+      }));
   }),
 
   add: publicProcedure
     .input(z.object({ path: z.string().min(1) }))
     .mutation(({ input }) => {
-      const db = getDatabaseManager().getDb();
+      const drizzle = getDatabaseManager().drizzle;
       const git = getGitService();
       const { path: repoPath } = input;
 
@@ -1962,19 +2230,21 @@ export const repositoryRouter = router({
       const branch = git.getCurrentBranch(repoPath);
       const id = uuidv4();
 
-      db.prepare(
-        `INSERT INTO repositories (id, name, path, base_branch) VALUES (?, ?, ?, ?)`
-      ).run(id, name, repoPath, branch);
+      drizzle.insert(schema.repositories).values({ id, name, path: repoPath, baseBranch: branch }).run();
 
-      return rowToRepo(
-        db.prepare('SELECT * FROM repositories WHERE id = ?').get(id) as Record<string, unknown>
-      );
+      const [row] = drizzle.select().from(schema.repositories).where(eq(schema.repositories.id, id)).all();
+      return {
+        id: row.id, name: row.name, path: row.path, color: row.color,
+        branchPrefix: row.branchPrefix, baseBranch: row.baseBranch,
+        worktreeBasePath: row.worktreeBasePath, setupScript: row.setupScript,
+        teardownScript: row.teardownScript, createdAt: row.createdAt,
+      };
     }),
 
   clone: publicProcedure
     .input(z.object({ url: z.string().url(), targetPath: z.string().min(1) }))
     .mutation(async ({ input }) => {
-      const db = getDatabaseManager().getDb();
+      const drizzle = getDatabaseManager().drizzle;
       const git = getGitService();
       const { url, targetPath } = input;
 
@@ -1983,15 +2253,15 @@ export const repositoryRouter = router({
       const name = url.split('/').pop()?.replace('.git', '') ?? 'repo';
       const id = uuidv4();
 
-      db.prepare(`INSERT INTO repositories (id, name, path) VALUES (?, ?, ?)`).run(
-        id,
-        name,
-        targetPath
-      );
+      drizzle.insert(schema.repositories).values({ id, name, path: targetPath }).run();
 
-      return rowToRepo(
-        db.prepare('SELECT * FROM repositories WHERE id = ?').get(id) as Record<string, unknown>
-      );
+      const [row] = drizzle.select().from(schema.repositories).where(eq(schema.repositories.id, id)).all();
+      return {
+        id: row.id, name: row.name, path: row.path, color: row.color,
+        branchPrefix: row.branchPrefix, baseBranch: row.baseBranch,
+        worktreeBasePath: row.worktreeBasePath, setupScript: row.setupScript,
+        teardownScript: row.teardownScript, createdAt: row.createdAt,
+      };
     }),
 
   update: publicProcedure
@@ -2010,44 +2280,48 @@ export const repositoryRouter = router({
       })
     )
     .mutation(({ input }) => {
-      const db = getDatabaseManager().getDb();
+      const drizzle = getDatabaseManager().drizzle;
       const { id, settings } = input;
-      const fields: string[] = [];
-      const values: unknown[] = [];
+      const updateFields: Partial<typeof schema.repositories.$inferInsert> = {};
+      if (settings.name !== undefined) updateFields.name = settings.name;
+      if (settings.color !== undefined) updateFields.color = settings.color;
+      if (settings.branchPrefix !== undefined) updateFields.branchPrefix = settings.branchPrefix;
+      if (settings.baseBranch !== undefined) updateFields.baseBranch = settings.baseBranch;
+      if (settings.worktreeBasePath !== undefined) updateFields.worktreeBasePath = settings.worktreeBasePath;
+      if (settings.setupScript !== undefined) updateFields.setupScript = settings.setupScript;
+      if (settings.teardownScript !== undefined) updateFields.teardownScript = settings.teardownScript;
 
-      if (settings.name !== undefined) { fields.push('name = ?'); values.push(settings.name); }
-      if (settings.color !== undefined) { fields.push('color = ?'); values.push(settings.color); }
-      if (settings.branchPrefix !== undefined) { fields.push('branch_prefix = ?'); values.push(settings.branchPrefix); }
-      if (settings.baseBranch !== undefined) { fields.push('base_branch = ?'); values.push(settings.baseBranch); }
-      if (settings.worktreeBasePath !== undefined) { fields.push('worktree_base_path = ?'); values.push(settings.worktreeBasePath); }
-      if (settings.setupScript !== undefined) { fields.push('setup_script = ?'); values.push(settings.setupScript); }
-      if (settings.teardownScript !== undefined) { fields.push('teardown_script = ?'); values.push(settings.teardownScript); }
-
-      if (fields.length > 0) {
-        db.prepare(`UPDATE repositories SET ${fields.join(', ')} WHERE id = ?`).run(...values, id);
+      if (Object.keys(updateFields).length > 0) {
+        drizzle.update(schema.repositories).set(updateFields).where(eq(schema.repositories.id, id)).run();
       }
 
-      return rowToRepo(
-        db.prepare('SELECT * FROM repositories WHERE id = ?').get(id) as Record<string, unknown>
-      );
+      const [row] = drizzle.select().from(schema.repositories).where(eq(schema.repositories.id, id)).all();
+      return {
+        id: row.id, name: row.name, path: row.path, color: row.color,
+        branchPrefix: row.branchPrefix, baseBranch: row.baseBranch,
+        worktreeBasePath: row.worktreeBasePath, setupScript: row.setupScript,
+        teardownScript: row.teardownScript, createdAt: row.createdAt,
+      };
     }),
 
   delete: publicProcedure
     .input(z.object({ id: z.string() }))
     .mutation(({ input }) => {
-      const db = getDatabaseManager().getDb();
-      db.prepare('DELETE FROM repositories WHERE id = ?').run(input.id);
+      const drizzle = getDatabaseManager().drizzle;
+      drizzle.delete(schema.repositories).where(eq(schema.repositories.id, input.id)).run();
     }),
 
   envVar: router({
     list: publicProcedure
       .input(z.object({ repositoryId: z.string() }))
       .query(({ input }) => {
-        const db = getDatabaseManager().getDb();
-        return db
-          .prepare('SELECT * FROM env_vars WHERE repository_id = ?')
-          .all(input.repositoryId)
-          .map((r) => rowToEnvVar(r as Record<string, unknown>));
+        const drizzle = getDatabaseManager().drizzle;
+        return drizzle
+          .select()
+          .from(schema.envVars)
+          .where(eq(schema.envVars.repositoryId, input.repositoryId))
+          .all()
+          .map((row) => ({ id: row.id, repositoryId: row.repositoryId, key: row.key, value: row.value }));
       }),
 
     upsert: publicProcedure
@@ -2059,29 +2333,32 @@ export const repositoryRouter = router({
         })
       )
       .mutation(({ input }) => {
-        const db = getDatabaseManager().getDb();
+        const drizzle = getDatabaseManager().drizzle;
         const { repositoryId, key, value } = input;
-        const existing = db
-          .prepare('SELECT id FROM env_vars WHERE repository_id = ? AND key = ?')
-          .get(repositoryId, key) as { id: string } | undefined;
+        const [existing] = drizzle
+          .select({ id: schema.envVars.id })
+          .from(schema.envVars)
+          .where(and(eq(schema.envVars.repositoryId, repositoryId), eq(schema.envVars.key, key)))
+          .all();
 
         const id = existing?.id ?? uuidv4();
-        db.prepare(
-          `INSERT INTO env_vars (id, repository_id, key, value)
-           VALUES (?, ?, ?, ?)
-           ON CONFLICT(repository_id, key) DO UPDATE SET value = excluded.value`
-        ).run(id, repositoryId, key, value);
+        drizzle.insert(schema.envVars)
+          .values({ id, repositoryId, key, value })
+          .onConflictDoUpdate({
+            target: [schema.envVars.repositoryId, schema.envVars.key],
+            set: { value },
+          })
+          .run();
 
-        return rowToEnvVar(
-          db.prepare('SELECT * FROM env_vars WHERE id = ?').get(id) as Record<string, unknown>
-        );
+        const [row] = drizzle.select().from(schema.envVars).where(eq(schema.envVars.id, id)).all();
+        return { id: row.id, repositoryId: row.repositoryId, key: row.key, value: row.value };
       }),
 
     delete: publicProcedure
       .input(z.object({ id: z.string() }))
       .mutation(({ input }) => {
-        const db = getDatabaseManager().getDb();
-        db.prepare('DELETE FROM env_vars WHERE id = ?').run(input.id);
+        const drizzle = getDatabaseManager().drizzle;
+        drizzle.delete(schema.envVars).where(eq(schema.envVars.id, input.id)).run();
       }),
   }),
 });
@@ -2462,21 +2739,21 @@ export const gitRouter = router({
       strategy: z.enum(['squash', 'rebase', 'merge']),
     }))
     .mutation(async ({ input }): Promise<{ success: boolean; message: string }> => {
-      const db = getDatabaseManager().getDb();
+      const drizzle = getDatabaseManager().drizzle;
 
       // 1. workspace 조회
-      const wsRow = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(input.workspaceId) as Record<string, unknown> | undefined;
+      const [wsRow] = drizzle.select().from(schema.workspaces).where(eq(schema.workspaces.id, input.workspaceId)).all();
       if (!wsRow) {
         return { success: false, message: 'Workspace not found' };
       }
-      const workspace = rowToWorkspace(wsRow);
+      const workspace = { id: wsRow.id, name: wsRow.name, repositoryId: wsRow.repositoryId, branch: wsRow.branch, worktreePath: wsRow.worktreePath, createdAt: wsRow.createdAt };
 
       // 2. repository 조회 → baseBranch 확인
-      const repoRow = db.prepare('SELECT * FROM repositories WHERE id = ?').get(workspace.repositoryId) as Record<string, unknown> | undefined;
+      const [repoRow] = drizzle.select().from(schema.repositories).where(eq(schema.repositories.id, workspace.repositoryId)).all();
       if (!repoRow) {
         return { success: false, message: 'Repository not found' };
       }
-      const repo = rowToRepo(repoRow);
+      const repo = { id: repoRow.id, name: repoRow.name, path: repoRow.path, color: repoRow.color, branchPrefix: repoRow.branchPrefix, baseBranch: repoRow.baseBranch, worktreeBasePath: repoRow.worktreeBasePath, setupScript: repoRow.setupScript, teardownScript: repoRow.teardownScript, createdAt: repoRow.createdAt };
       const baseBranch = repo.baseBranch || 'main';
 
       // 3. worktree 경로에서 simple-git 인스턴스 생성
@@ -2551,46 +2828,54 @@ export const gitRouter = router({
 
 export const mcpRouter = router({
   list: publicProcedure.query(() => {
-    const db = getDatabaseManager().getDb();
-    return db
-      .prepare('SELECT * FROM mcp_servers ORDER BY created_at')
+    const drizzle = getDatabaseManager().drizzle;
+    return drizzle
+      .select()
+      .from(schema.mcpServers)
+      .orderBy(asc(schema.mcpServers.createdAt))
       .all()
-      .map((r) => rowToMcpServer(r as McpServerRow));
+      .map((row) => ({
+        id: row.id, name: row.name, url: row.url,
+        enabled: row.enabled, status: row.status as 'connected' | 'offline' | 'error',
+        errorMsg: row.errorMsg, createdAt: row.createdAt,
+      }));
   }),
 
   add: publicProcedure
     .input(z.object({ name: z.string().min(1), url: z.string().url() }))
     .mutation(({ input }) => {
-      const db = getDatabaseManager().getDb();
+      const drizzle = getDatabaseManager().drizzle;
       const id = uuidv4();
-      db.prepare(`INSERT INTO mcp_servers (id, name, url) VALUES (?, ?, ?)`).run(
-        id,
-        input.name,
-        input.url
-      );
-      return rowToMcpServer(
-        db.prepare('SELECT * FROM mcp_servers WHERE id = ?').get(id) as McpServerRow
-      );
+      drizzle.insert(schema.mcpServers).values({ id, name: input.name, url: input.url }).run();
+      const [row] = drizzle.select().from(schema.mcpServers).where(eq(schema.mcpServers.id, id)).all();
+      return {
+        id: row.id, name: row.name, url: row.url,
+        enabled: row.enabled, status: row.status as 'connected' | 'offline' | 'error',
+        errorMsg: row.errorMsg, createdAt: row.createdAt,
+      };
     }),
 
   delete: publicProcedure
     .input(z.object({ id: z.string() }))
     .mutation(({ input }) => {
-      const db = getDatabaseManager().getDb();
-      db.prepare('DELETE FROM mcp_servers WHERE id = ?').run(input.id);
+      const drizzle = getDatabaseManager().drizzle;
+      drizzle.delete(schema.mcpServers).where(eq(schema.mcpServers.id, input.id)).run();
     }),
 
   toggle: publicProcedure
     .input(z.object({ id: z.string(), enabled: z.boolean() }))
     .mutation(({ input }) => {
-      const db = getDatabaseManager().getDb();
-      db.prepare(`UPDATE mcp_servers SET enabled = ? WHERE id = ?`).run(
-        input.enabled ? 1 : 0,
-        input.id
-      );
-      return rowToMcpServer(
-        db.prepare('SELECT * FROM mcp_servers WHERE id = ?').get(input.id) as McpServerRow
-      );
+      const drizzle = getDatabaseManager().drizzle;
+      drizzle.update(schema.mcpServers)
+        .set({ enabled: input.enabled })
+        .where(eq(schema.mcpServers.id, input.id))
+        .run();
+      const [row] = drizzle.select().from(schema.mcpServers).where(eq(schema.mcpServers.id, input.id)).all();
+      return {
+        id: row.id, name: row.name, url: row.url,
+        enabled: row.enabled, status: row.status as 'connected' | 'offline' | 'error',
+        errorMsg: row.errorMsg, createdAt: row.createdAt,
+      };
     }),
 
   updateStatus: publicProcedure
@@ -2602,22 +2887,26 @@ export const mcpRouter = router({
       })
     )
     .mutation(({ input }) => {
-      const db = getDatabaseManager().getDb();
-      db.prepare(`UPDATE mcp_servers SET status = ?, error_msg = ? WHERE id = ?`).run(
-        input.status,
-        input.errorMsg,
-        input.id
-      );
-      return rowToMcpServer(
-        db.prepare('SELECT * FROM mcp_servers WHERE id = ?').get(input.id) as McpServerRow
-      );
+      const drizzle = getDatabaseManager().drizzle;
+      drizzle.update(schema.mcpServers)
+        .set({ status: input.status, errorMsg: input.errorMsg })
+        .where(eq(schema.mcpServers.id, input.id))
+        .run();
+      const [row] = drizzle.select().from(schema.mcpServers).where(eq(schema.mcpServers.id, input.id)).all();
+      return {
+        id: row.id, name: row.name, url: row.url,
+        enabled: row.enabled, status: row.status as 'connected' | 'offline' | 'error',
+        errorMsg: row.errorMsg, createdAt: row.createdAt,
+      };
     }),
 
   checkServers: publicProcedure.mutation(async () => {
-    const db = getDatabaseManager().getDb();
-    const servers = db
-      .prepare('SELECT * FROM mcp_servers WHERE enabled = 1')
-      .all() as McpServerRow[];
+    const drizzle = getDatabaseManager().drizzle;
+    const servers = drizzle
+      .select()
+      .from(schema.mcpServers)
+      .where(eq(schema.mcpServers.enabled, true))
+      .all();
 
     const results = await Promise.all(
       servers.map(async (server) => {
@@ -2627,18 +2916,22 @@ export const mcpRouter = router({
           const port = parseInt(url.port || '80', 10);
           const connected = await checkSocketConnection(host, port);
           const status = connected ? 'connected' : 'offline';
-          db.prepare(`UPDATE mcp_servers SET status = ?, error_msg = NULL WHERE id = ?`).run(
-            status,
-            server.id
-          );
+          drizzle.update(schema.mcpServers)
+            .set({ status, errorMsg: null })
+            .where(eq(schema.mcpServers.id, server.id))
+            .run();
         } catch (err) {
-          db.prepare(
-            `UPDATE mcp_servers SET status = 'error', error_msg = ? WHERE id = ?`
-          ).run(String(err), server.id);
+          drizzle.update(schema.mcpServers)
+            .set({ status: 'error', errorMsg: String(err) })
+            .where(eq(schema.mcpServers.id, server.id))
+            .run();
         }
-        return rowToMcpServer(
-          db.prepare('SELECT * FROM mcp_servers WHERE id = ?').get(server.id) as McpServerRow
-        );
+        const [row] = drizzle.select().from(schema.mcpServers).where(eq(schema.mcpServers.id, server.id)).all();
+        return {
+          id: row.id, name: row.name, url: row.url,
+          enabled: row.enabled, status: row.status as 'connected' | 'offline' | 'error',
+          errorMsg: row.errorMsg, createdAt: row.createdAt,
+        };
       })
     );
 
@@ -2650,26 +2943,17 @@ export const mcpRouter = router({
 
 export const appStateRouter = router({
   load: publicProcedure.query((): AppState => {
-    const db = getDatabaseManager().getDb();
-    const row = db
-      .prepare(`SELECT value FROM app_state WHERE key = 'ui_state'`)
-      .get() as { value: string } | undefined;
-
-    if (!row) {
-      return { sidebarWidth: 240, rightSidebarWidth: 320 };
-    }
-
-    return JSON.parse(row.value) as AppState;
+    const state = AppStateService.getInstance().get();
+    return {
+      sidebarWidth: state.sidebarWidth,
+      rightSidebarWidth: state.rightSidebarWidth,
+    } as AppState;
   }),
 
   save: publicProcedure
     .input(z.object({ state: z.record(z.string(), z.unknown()) }))
-    .mutation(({ input }) => {
-      const db = getDatabaseManager().getDb();
-      db.prepare(
-        `INSERT INTO app_state (key, value) VALUES ('ui_state', ?)
-         ON CONFLICT(key) DO UPDATE SET value = excluded.value`
-      ).run(JSON.stringify(input.state));
+    .mutation(async ({ input }) => {
+      await AppStateService.getInstance().set(input.state as Partial<LocalAppState>);
     }),
 });
 
@@ -2677,26 +2961,18 @@ export const appStateRouter = router({
 
 export const uiRouter = router({
   loadState: publicProcedure.query((): AppState => {
-    const db = getDatabaseManager().getDb();
-    const row = db
-      .prepare(`SELECT value FROM app_state WHERE key = 'ui_state'`)
-      .get() as { value: string } | undefined;
-
-    if (!row) {
-      return { sidebarWidth: 240, rightSidebarWidth: 320 };
-    }
-
-    return JSON.parse(row.value) as AppState;
+    const state = AppStateService.getInstance().get();
+    return {
+      sidebarWidth: state.sidebarWidth,
+      rightSidebarWidth: state.rightSidebarWidth,
+      activeWorkspaceId: state.activeWorkspaceId,
+    } as AppState;
   }),
 
   saveState: publicProcedure
     .input(z.record(z.string(), z.unknown()))
-    .mutation(({ input }) => {
-      const db = getDatabaseManager().getDb();
-      db.prepare(
-        `INSERT INTO app_state (key, value) VALUES ('ui_state', ?)
-         ON CONFLICT(key) DO UPDATE SET value = excluded.value`
-      ).run(JSON.stringify(input));
+    .mutation(async ({ input }) => {
+      await AppStateService.getInstance().set(input as Partial<LocalAppState>);
     }),
 
   focus: publicProcedure
@@ -2959,13 +3235,12 @@ async function dispatchWebhook(
   event: string,
   payload: Record<string, unknown>,
 ): Promise<void> {
-  const db = getDatabaseManager().getDb();
+  const drizzle = getDatabaseManager().drizzle;
   const body = JSON.stringify({ event, ...payload, timestamp: new Date().toISOString() });
 
   const delays = [1000, 2000, 4000]; // 지수 백오프
   let statusCode: number | null = null;
   let responseBody = '';
-  let success = false;
 
   for (let attempt = 0; attempt <= delays.length; attempt++) {
     try {
@@ -2978,7 +3253,7 @@ async function dispatchWebhook(
       const res = await fetch(url, { method: 'POST', headers, body, signal: AbortSignal.timeout(10000) });
       statusCode = res.status;
       responseBody = await res.text().catch(() => '');
-      if (res.ok) { success = true; break; }
+      if (res.ok) { break; }
     } catch (err) {
       responseBody = String(err);
     }
@@ -2989,19 +3264,24 @@ async function dispatchWebhook(
   }
 
   // 로그 기록
-  const logId = uuidv4();
-  db.prepare(
-    `INSERT INTO webhook_logs (id, webhook_id, event, status_code, response_body) VALUES (?, ?, ?, ?, ?)`
-  ).run(logId, webhookId, event, statusCode, responseBody.slice(0, 2000));
+  drizzle.insert(schema.webhookLogs).values({
+    id: uuidv4(),
+    webhookId,
+    event,
+    statusCode,
+    responseBody: responseBody.slice(0, 2000),
+  }).run();
 }
 
 /** 등록된 모든 웹훅에 이벤트 발송 */
 export function emitWebhookEvent(event: string, payload: Record<string, unknown>): void {
   try {
-    const db = getDatabaseManager().getDb();
-    const webhooks = db
-      .prepare(`SELECT * FROM webhooks WHERE enabled = 1`)
-      .all() as WebhookRow[];
+    const drizzle = getDatabaseManager().drizzle;
+    const webhooks = drizzle
+      .select()
+      .from(schema.webhooks)
+      .where(eq(schema.webhooks.enabled, true))
+      .all();
 
     for (const wh of webhooks) {
       const events = JSON.parse(wh.events) as string[];
@@ -3014,9 +3294,17 @@ export function emitWebhookEvent(event: string, payload: Record<string, unknown>
 
 export const webhookRouter = router({
   list: publicProcedure.query(() => {
-    const db = getDatabaseManager().getDb();
-    return (db.prepare('SELECT * FROM webhooks ORDER BY created_at DESC').all() as WebhookRow[])
-      .map(rowToWebhook);
+    const drizzle = getDatabaseManager().drizzle;
+    return drizzle
+      .select()
+      .from(schema.webhooks)
+      .orderBy(desc(schema.webhooks.createdAt))
+      .all()
+      .map((row) => ({
+        id: row.id, url: row.url,
+        events: JSON.parse(row.events) as string[],
+        secret: row.secret, enabled: row.enabled, createdAt: row.createdAt,
+      }));
   }),
 
   create: publicProcedure
@@ -3026,12 +3314,16 @@ export const webhookRouter = router({
       secret: z.string().default(''),
     }))
     .mutation(({ input }) => {
-      const db = getDatabaseManager().getDb();
+      const drizzle = getDatabaseManager().drizzle;
       const id = uuidv4();
-      db.prepare(
-        `INSERT INTO webhooks (id, url, events, secret) VALUES (?, ?, ?, ?)`
-      ).run(id, input.url, JSON.stringify(input.events), input.secret);
-      return rowToWebhook(db.prepare('SELECT * FROM webhooks WHERE id = ?').get(id) as WebhookRow);
+      drizzle.insert(schema.webhooks).values({
+        id,
+        url: input.url,
+        events: JSON.stringify(input.events),
+        secret: input.secret,
+      }).run();
+      const [row] = drizzle.select().from(schema.webhooks).where(eq(schema.webhooks.id, id)).all();
+      return { id: row.id, url: row.url, events: JSON.parse(row.events) as string[], secret: row.secret, enabled: row.enabled, createdAt: row.createdAt };
     }),
 
   update: publicProcedure
@@ -3043,34 +3335,33 @@ export const webhookRouter = router({
       enabled: z.boolean().optional(),
     }))
     .mutation(({ input }) => {
-      const db = getDatabaseManager().getDb();
-      const fields: string[] = [];
-      const values: unknown[] = [];
-      if (input.url !== undefined) { fields.push('url = ?'); values.push(input.url); }
-      if (input.events !== undefined) { fields.push('events = ?'); values.push(JSON.stringify(input.events)); }
-      if (input.secret !== undefined) { fields.push('secret = ?'); values.push(input.secret); }
-      if (input.enabled !== undefined) { fields.push('enabled = ?'); values.push(input.enabled ? 1 : 0); }
-      if (fields.length > 0) {
-        db.prepare(`UPDATE webhooks SET ${fields.join(', ')} WHERE id = ?`).run(...values, input.id);
+      const drizzle = getDatabaseManager().drizzle;
+      const updateFields: Partial<typeof schema.webhooks.$inferInsert> = {};
+      if (input.url !== undefined) updateFields.url = input.url;
+      if (input.events !== undefined) updateFields.events = JSON.stringify(input.events);
+      if (input.secret !== undefined) updateFields.secret = input.secret;
+      if (input.enabled !== undefined) updateFields.enabled = input.enabled;
+      if (Object.keys(updateFields).length > 0) {
+        drizzle.update(schema.webhooks).set(updateFields).where(eq(schema.webhooks.id, input.id)).run();
       }
-      const row = db.prepare('SELECT * FROM webhooks WHERE id = ?').get(input.id) as WebhookRow | undefined;
+      const [row] = drizzle.select().from(schema.webhooks).where(eq(schema.webhooks.id, input.id)).all();
       if (!row) throw new Error(`Webhook ${input.id} not found`);
-      return rowToWebhook(row);
+      return { id: row.id, url: row.url, events: JSON.parse(row.events) as string[], secret: row.secret, enabled: row.enabled, createdAt: row.createdAt };
     }),
 
   delete: publicProcedure
     .input(z.object({ id: z.string() }))
     .mutation(({ input }) => {
-      const db = getDatabaseManager().getDb();
-      db.prepare('DELETE FROM webhook_logs WHERE webhook_id = ?').run(input.id);
-      db.prepare('DELETE FROM webhooks WHERE id = ?').run(input.id);
+      const drizzle = getDatabaseManager().drizzle;
+      drizzle.delete(schema.webhookLogs).where(eq(schema.webhookLogs.webhookId, input.id)).run();
+      drizzle.delete(schema.webhooks).where(eq(schema.webhooks.id, input.id)).run();
     }),
 
   test: publicProcedure
     .input(z.object({ id: z.string() }))
     .mutation(async ({ input }) => {
-      const db = getDatabaseManager().getDb();
-      const wh = db.prepare('SELECT * FROM webhooks WHERE id = ?').get(input.id) as WebhookRow | undefined;
+      const drizzle = getDatabaseManager().drizzle;
+      const [wh] = drizzle.select().from(schema.webhooks).where(eq(schema.webhooks.id, input.id)).all();
       if (!wh) throw new Error(`Webhook ${input.id} not found`);
 
       const body = JSON.stringify({ event: 'test', message: 'Webhook test from Maestro', timestamp: new Date().toISOString() });
@@ -3081,17 +3372,15 @@ export const webhookRouter = router({
           headers['X-Maestro-Signature'] = hmac;
         }
         const res = await fetch(wh.url, { method: 'POST', headers, body, signal: AbortSignal.timeout(10000) });
-        const logId = uuidv4();
         const resBody = await res.text().catch(() => '');
-        db.prepare(
-          `INSERT INTO webhook_logs (id, webhook_id, event, status_code, response_body) VALUES (?, ?, ?, ?, ?)`
-        ).run(logId, wh.id, 'test', res.status, resBody.slice(0, 2000));
+        drizzle.insert(schema.webhookLogs).values({
+          id: uuidv4(), webhookId: wh.id, event: 'test', statusCode: res.status, responseBody: resBody.slice(0, 2000),
+        }).run();
         return { success: res.ok, statusCode: res.status };
       } catch (err) {
-        const logId = uuidv4();
-        db.prepare(
-          `INSERT INTO webhook_logs (id, webhook_id, event, status_code, response_body) VALUES (?, ?, ?, ?, ?)`
-        ).run(logId, wh.id, 'test', null, String(err).slice(0, 2000));
+        drizzle.insert(schema.webhookLogs).values({
+          id: uuidv4(), webhookId: wh.id, event: 'test', statusCode: null, responseBody: String(err).slice(0, 2000),
+        }).run();
         return { success: false, statusCode: null };
       }
     }),
@@ -3099,10 +3388,18 @@ export const webhookRouter = router({
   getLogs: publicProcedure
     .input(z.object({ webhookId: z.string(), limit: z.number().int().positive().max(100).default(20) }))
     .query(({ input }) => {
-      const db = getDatabaseManager().getDb();
-      return (db.prepare('SELECT * FROM webhook_logs WHERE webhook_id = ? ORDER BY created_at DESC LIMIT ?')
-        .all(input.webhookId, input.limit) as WebhookLogRow[])
-        .map(rowToWebhookLog);
+      const drizzle = getDatabaseManager().drizzle;
+      return drizzle
+        .select()
+        .from(schema.webhookLogs)
+        .where(eq(schema.webhookLogs.webhookId, input.webhookId))
+        .orderBy(desc(schema.webhookLogs.createdAt))
+        .limit(input.limit)
+        .all()
+        .map((row) => ({
+          id: row.id, webhookId: row.webhookId, event: row.event,
+          statusCode: row.statusCode, responseBody: row.responseBody, createdAt: row.createdAt,
+        }));
     }),
 });
 
@@ -3121,27 +3418,33 @@ function rowToApiKey(row: ApiKeyRow) {
 
 export const apiKeyRouter = router({
   get: publicProcedure.query(() => {
-    const db = getDatabaseManager().getDb();
-    const row = db.prepare('SELECT * FROM api_keys ORDER BY created_at DESC LIMIT 1').get() as ApiKeyRow | undefined;
-    return row ? rowToApiKey(row) : null;
+    const drizzle = getDatabaseManager().drizzle;
+    const [row] = drizzle
+      .select()
+      .from(schema.apiKeys)
+      .orderBy(desc(schema.apiKeys.createdAt))
+      .limit(1)
+      .all();
+    return row ? { id: row.id, key: row.key, name: row.name, createdAt: row.createdAt } : null;
   }),
 
   generate: publicProcedure
     .input(z.object({ name: z.string().default('Default') }))
     .mutation(({ input }) => {
-      const db = getDatabaseManager().getDb();
+      const drizzle = getDatabaseManager().drizzle;
       const id = uuidv4();
       const key = uuidv4();
-      db.prepare('DELETE FROM api_keys').run(); // 기존 키 모두 제거 (단일 키 정책)
-      db.prepare('INSERT INTO api_keys (id, key, name) VALUES (?, ?, ?)').run(id, key, input.name);
-      return rowToApiKey(db.prepare('SELECT * FROM api_keys WHERE id = ?').get(id) as ApiKeyRow);
+      drizzle.delete(schema.apiKeys).run(); // 기존 키 모두 제거 (단일 키 정책)
+      drizzle.insert(schema.apiKeys).values({ id, key, name: input.name }).run();
+      const [row] = drizzle.select().from(schema.apiKeys).where(eq(schema.apiKeys.id, id)).all();
+      return { id: row.id, key: row.key, name: row.name, createdAt: row.createdAt };
     }),
 
   revoke: publicProcedure
     .input(z.object({ id: z.string() }))
     .mutation(({ input }) => {
-      const db = getDatabaseManager().getDb();
-      db.prepare('DELETE FROM api_keys WHERE id = ?').run(input.id);
+      const drizzle = getDatabaseManager().drizzle;
+      drizzle.delete(schema.apiKeys).where(eq(schema.apiKeys.id, input.id)).run();
     }),
 });
 
@@ -3164,11 +3467,14 @@ export const relayRouter = router({
   }),
 
   getSessions: publicProcedure.query(() => {
-    const db = getDatabaseManager().getDb();
-    const sessions = db
-      .prepare(`SELECT id, name, created_at FROM sessions ORDER BY created_at DESC LIMIT 50`)
-      .all() as { id: string; name: string; created_at: string }[];
-    const result = sessions.map((s) => ({ id: s.id, name: s.name, createdAt: s.created_at }));
+    const drizzle = getDatabaseManager().drizzle;
+    const sessions = drizzle
+      .select({ id: schema.sessions.id, name: schema.sessions.name, createdAt: schema.sessions.createdAt })
+      .from(schema.sessions)
+      .orderBy(desc(schema.sessions.createdAt))
+      .limit(50)
+      .all();
+    const result = sessions.map((s) => ({ id: s.id, name: s.name, createdAt: s.createdAt }));
     // 세션 목록을 모바일 클라이언트에 브로드캐스트
     relayClient.broadcastSessions(result);
     return result;
@@ -3219,8 +3525,16 @@ function rowToPlugin(row: PluginRow) {
 
 export const pluginRouter = router({
   list: publicProcedure.query(() => {
-    const db = getDatabaseManager().getDb();
-    return (db.prepare('SELECT * FROM plugins ORDER BY loaded_at DESC').all() as PluginRow[]).map(rowToPlugin);
+    const drizzle = getDatabaseManager().drizzle;
+    return drizzle
+      .select()
+      .from(schema.plugins)
+      .orderBy(desc(schema.plugins.loadedAt))
+      .all()
+      .map((row) => ({
+        id: row.id, name: row.name, version: row.version, path: row.path,
+        enabled: row.enabled, loadedAt: row.loadedAt,
+      }));
   }),
 
   load: publicProcedure
@@ -3241,24 +3555,28 @@ export const pluginRouter = router({
         throw new Error(`Plugin entry file not found: ${entryPath}`);
       }
 
-      const db = getDatabaseManager().getDb();
+      const drizzle = getDatabaseManager().drizzle;
       const id = uuidv4();
 
       // 같은 경로의 플러그인이 이미 로드되어 있으면 교체
-      db.prepare('DELETE FROM plugins WHERE path = ?').run(input.pluginPath);
+      drizzle.delete(schema.plugins).where(eq(schema.plugins.path, input.pluginPath)).run();
 
-      db.prepare('INSERT INTO plugins (id, name, version, path, enabled) VALUES (?, ?, ?, ?, 1)')
-        .run(id, manifest.name, manifest.version, input.pluginPath);
+      drizzle.insert(schema.plugins).values({
+        id, name: manifest.name, version: manifest.version, path: input.pluginPath, enabled: true,
+      }).run();
 
-      const row = db.prepare('SELECT * FROM plugins WHERE id = ?').get(id) as PluginRow;
-      return rowToPlugin(row);
+      const [row] = drizzle.select().from(schema.plugins).where(eq(schema.plugins.id, id)).all();
+      return {
+        id: row.id, name: row.name, version: row.version, path: row.path,
+        enabled: row.enabled, loadedAt: row.loadedAt,
+      };
     }),
 
   unload: publicProcedure
     .input(z.object({ pluginId: z.string() }))
     .mutation(({ input }) => {
-      const db = getDatabaseManager().getDb();
-      db.prepare('DELETE FROM plugins WHERE id = ?').run(input.pluginId);
+      const drizzle = getDatabaseManager().drizzle;
+      drizzle.delete(schema.plugins).where(eq(schema.plugins.id, input.pluginId)).run();
     }),
 });
 
@@ -3266,15 +3584,27 @@ export const pluginRouter = router({
 
 export const profileRouter = router({
   export: publicProcedure.mutation(async () => {
-    const db = getDatabaseManager().getDb();
+    const drizzle = getDatabaseManager().drizzle;
 
     // 에이전트 목록
-    const agents = (db.prepare('SELECT * FROM agents WHERE is_built_in = 0').all() as Array<Record<string, unknown>>)
-      .map(rowToAgent);
+    const agents = drizzle
+      .select()
+      .from(schema.agents)
+      .where(eq(schema.agents.isBuiltIn, false))
+      .all()
+      .map((row) => ({
+        id: row.id, name: row.name, command: row.command,
+        args: JSON.parse(row.args) as string[],
+        env: JSON.parse(row.env) as Record<string, string>,
+        isBuiltIn: false, scriptPath: row.scriptPath ?? null, scriptContent: row.scriptContent ?? null,
+      }));
 
     // MCP 서버 목록
-    const mcpServers = (db.prepare('SELECT * FROM mcp_servers').all() as McpServerRow[])
-      .map((row) => ({ name: row.name, url: row.url, enabled: Boolean(row.enabled) }));
+    const mcpServers = drizzle
+      .select()
+      .from(schema.mcpServers)
+      .all()
+      .map((row) => ({ name: row.name, url: row.url, enabled: row.enabled }));
 
     const profile = {
       agents,
@@ -3323,37 +3653,38 @@ export const profileRouter = router({
 
       const content = fs.readFileSync(result.filePaths[0], 'utf-8');
       const profile = JSON.parse(content);
-      const db = getDatabaseManager().getDb();
+      const drizzle = getDatabaseManager().drizzle;
 
       if (input.mode === 'overwrite') {
         // 기존 커스텀 에이전트 제거
-        db.prepare('DELETE FROM agents WHERE is_built_in = 0').run();
-        db.prepare('DELETE FROM mcp_servers').run();
+        drizzle.delete(schema.agents).where(eq(schema.agents.isBuiltIn, false)).run();
+        drizzle.delete(schema.mcpServers).run();
       }
 
       // 에이전트 가져오기
       if (Array.isArray(profile.agents)) {
-        const insertAgent = db.prepare(
-          'INSERT OR IGNORE INTO agents (id, name, command, args, env, is_built_in) VALUES (?, ?, ?, ?, ?, 0)'
-        );
         for (const agent of profile.agents) {
-          insertAgent.run(
-            agent.id ?? uuidv4(),
-            agent.name,
-            agent.command,
-            JSON.stringify(agent.args ?? []),
-            JSON.stringify(agent.env ?? {}),
-          );
+          drizzle.insert(schema.agents)
+            .values({
+              id: agent.id ?? uuidv4(),
+              name: agent.name,
+              command: agent.command,
+              args: JSON.stringify(agent.args ?? []),
+              env: JSON.stringify(agent.env ?? {}),
+              isBuiltIn: false,
+            })
+            .onConflictDoNothing()
+            .run();
         }
       }
 
       // MCP 서버 가져오기
       if (Array.isArray(profile.mcpServers)) {
-        const insertMcp = db.prepare(
-          'INSERT OR IGNORE INTO mcp_servers (id, name, url, enabled) VALUES (?, ?, ?, ?)'
-        );
         for (const server of profile.mcpServers) {
-          insertMcp.run(uuidv4(), server.name, server.url, server.enabled ? 1 : 0);
+          drizzle.insert(schema.mcpServers)
+            .values({ id: uuidv4(), name: server.name, url: server.url, enabled: Boolean(server.enabled) })
+            .onConflictDoNothing()
+            .run();
         }
       }
 
@@ -3418,35 +3749,35 @@ export const themeRouter = router({
 
 export const projectRouter = router({
   list: publicProcedure.query((): Project[] => {
-    const db = getDatabaseManager().getDb();
-    const rows = db
-      .prepare('SELECT * FROM projects ORDER BY created_at DESC')
-      .all() as Array<Record<string, unknown>>;
-    return rows.map((r) => ({
-      id: r.id as string,
-      name: r.name as string,
-      description: (r.description as string) ?? undefined,
-      repositoryId: (r.repository_id as string) ?? undefined,
-      createdAt: r.created_at as number,
-      updatedAt: r.updated_at as number,
-    }));
+    const drizzle = getDatabaseManager().drizzle;
+    return drizzle
+      .select()
+      .from(schema.projects)
+      .orderBy(desc(schema.projects.createdAt))
+      .all()
+      .map((r) => ({
+        id: r.id,
+        name: r.name,
+        description: r.description ?? undefined,
+        repositoryId: r.repositoryId ?? undefined,
+        createdAt: r.createdAt,
+        updatedAt: r.updatedAt,
+      }));
   }),
 
   get: publicProcedure
     .input(z.object({ id: z.string() }))
     .query(({ input }: { input: any }): Project | null => {
-      const db = getDatabaseManager().getDb();
-      const row = db
-        .prepare('SELECT * FROM projects WHERE id = ?')
-        .get(input.id) as Record<string, unknown> | undefined;
+      const drizzle = getDatabaseManager().drizzle;
+      const [row] = drizzle.select().from(schema.projects).where(eq(schema.projects.id, input.id)).all();
       if (!row) return null;
       return {
-        id: row.id as string,
-        name: row.name as string,
-        description: (row.description as string) ?? undefined,
-        repositoryId: (row.repository_id as string) ?? undefined,
-        createdAt: row.created_at as number,
-        updatedAt: row.updated_at as number,
+        id: row.id,
+        name: row.name,
+        description: row.description ?? undefined,
+        repositoryId: row.repositoryId ?? undefined,
+        createdAt: row.createdAt,
+        updatedAt: row.updatedAt,
       };
     }),
 
@@ -3457,12 +3788,17 @@ export const projectRouter = router({
       repositoryId: z.string().optional(),
     }))
     .mutation(({ input }: { input: any }): Project => {
-      const db = getDatabaseManager().getDb();
+      const drizzle = getDatabaseManager().drizzle;
       const id = uuidv4();
       const now = Date.now();
-      db.prepare(
-        'INSERT INTO projects (id, name, description, repository_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
-      ).run(id, input.name, input.description ?? null, input.repositoryId ?? null, now, now);
+      drizzle.insert(schema.projects).values({
+        id,
+        name: input.name,
+        description: input.description ?? null,
+        repositoryId: input.repositoryId ?? null,
+        createdAt: now,
+        updatedAt: now,
+      }).run();
       return {
         id,
         name: input.name,
@@ -3483,131 +3819,95 @@ export const projectRouter = router({
       }),
     }))
     .mutation(({ input }: { input: any }): Project => {
-      const db = getDatabaseManager().getDb();
+      const drizzle = getDatabaseManager().drizzle;
       const now = Date.now();
 
-      const existing = db
-        .prepare('SELECT * FROM projects WHERE id = ?')
-        .get(input.id) as Record<string, unknown> | undefined;
+      const [existing] = drizzle.select({ id: schema.projects.id }).from(schema.projects).where(eq(schema.projects.id, input.id)).all();
       if (!existing) throw new Error(`Project not found: ${input.id}`);
 
-      const fields: string[] = ['updated_at = ?'];
-      const values: unknown[] = [now];
+      const updateFields: Partial<typeof schema.projects.$inferInsert> = { updatedAt: now };
+      if (input.data.name !== undefined) updateFields.name = input.data.name;
+      if (input.data.description !== undefined) updateFields.description = input.data.description;
+      if (input.data.repositoryId !== undefined) updateFields.repositoryId = input.data.repositoryId;
 
-      if (input.data.name !== undefined) { fields.push('name = ?'); values.push(input.data.name); }
-      if (input.data.description !== undefined) { fields.push('description = ?'); values.push(input.data.description); }
-      if (input.data.repositoryId !== undefined) { fields.push('repository_id = ?'); values.push(input.data.repositoryId); }
+      drizzle.update(schema.projects).set(updateFields).where(eq(schema.projects.id, input.id)).run();
 
-      values.push(input.id);
-      db.prepare(`UPDATE projects SET ${fields.join(', ')} WHERE id = ?`).run(...values);
-
-      const updated = db
-        .prepare('SELECT * FROM projects WHERE id = ?')
-        .get(input.id) as Record<string, unknown>;
+      const [updated] = drizzle.select().from(schema.projects).where(eq(schema.projects.id, input.id)).all();
       return {
-        id: updated.id as string,
-        name: updated.name as string,
-        description: (updated.description as string) ?? undefined,
-        repositoryId: (updated.repository_id as string) ?? undefined,
-        createdAt: updated.created_at as number,
-        updatedAt: updated.updated_at as number,
+        id: updated.id,
+        name: updated.name,
+        description: updated.description ?? undefined,
+        repositoryId: updated.repositoryId ?? undefined,
+        createdAt: updated.createdAt,
+        updatedAt: updated.updatedAt,
       };
     }),
 
   delete: publicProcedure
     .input(z.object({ id: z.string() }))
     .mutation(({ input }: { input: any }): void => {
-      const db = getDatabaseManager().getDb();
-      db.prepare('DELETE FROM projects WHERE id = ?').run(input.id);
+      const drizzle = getDatabaseManager().drizzle;
+      drizzle.delete(schema.projects).where(eq(schema.projects.id, input.id)).run();
     }),
 });
 
 // ── AI Agent Editor: projectTaskRouter ────────────────────────────────────────
 
+// helper to map a drizzle task row to ProjectTask
+function drizzleTaskToProjectTask(r: typeof schema.tasks.$inferSelect): ProjectTask {
+  return {
+    id: r.id,
+    projectId: r.projectId,
+    parentTaskId: r.parentTaskId ?? undefined,
+    title: r.title,
+    prd: r.prd ?? undefined,
+    spec: r.spec ?? undefined,
+    referenceFiles: r.referenceFiles ? (JSON.parse(r.referenceFiles) as string[]) : undefined,
+    acceptanceCriteria: r.acceptanceCriteria ?? undefined,
+    priority: r.priority as ProjectTask['priority'],
+    assignedAgentId: r.assignedAgentId ?? undefined,
+    status: r.status as ProjectTask['status'],
+    createdBy: r.createdBy as ProjectTask['createdBy'],
+    workspaceId: r.workspaceId ?? undefined,
+    createdAt: r.createdAt,
+    updatedAt: r.updatedAt,
+  };
+}
+
 export const projectTaskRouter = router({
   list: publicProcedure
     .input(z.object({ projectId: z.string() }))
     .query(({ input }: { input: any }): ProjectTask[] => {
-      const db = getDatabaseManager().getDb();
-      const rows = db
-        .prepare('SELECT * FROM tasks WHERE project_id = ? ORDER BY created_at ASC')
-        .all(input.projectId) as Array<Record<string, unknown>>;
-      return rows.map((r) => ({
-        id: r.id as string,
-        projectId: r.project_id as string,
-        parentTaskId: (r.parent_task_id as string) ?? undefined,
-        title: r.title as string,
-        prd: (r.prd as string) ?? undefined,
-        spec: (r.spec as string) ?? undefined,
-        referenceFiles: r.reference_files
-          ? (JSON.parse(r.reference_files as string) as string[])
-          : undefined,
-        acceptanceCriteria: (r.acceptance_criteria as string) ?? undefined,
-        priority: r.priority as ProjectTask['priority'],
-        assignedAgentId: (r.assigned_agent_id as string) ?? undefined,
-        status: r.status as ProjectTask['status'],
-        createdBy: r.created_by as ProjectTask['createdBy'],
-        workspaceId: (r.workspace_id as string) ?? undefined,
-        createdAt: r.created_at as number,
-        updatedAt: r.updated_at as number,
-      }));
+      const drizzle = getDatabaseManager().drizzle;
+      return drizzle
+        .select()
+        .from(schema.tasks)
+        .where(eq(schema.tasks.projectId, input.projectId))
+        .orderBy(asc(schema.tasks.createdAt))
+        .all()
+        .map(drizzleTaskToProjectTask);
     }),
 
   listChildren: publicProcedure
     .input(z.object({ parentTaskId: z.string() }))
     .query(({ input }: { input: any }): ProjectTask[] => {
-      const db = getDatabaseManager().getDb();
-      const rows = db
-        .prepare('SELECT * FROM tasks WHERE parent_task_id = ? ORDER BY created_at ASC')
-        .all(input.parentTaskId) as Array<Record<string, unknown>>;
-      return rows.map((r) => ({
-        id: r.id as string,
-        projectId: r.project_id as string,
-        parentTaskId: (r.parent_task_id as string) ?? undefined,
-        title: r.title as string,
-        prd: (r.prd as string) ?? undefined,
-        spec: (r.spec as string) ?? undefined,
-        referenceFiles: r.reference_files
-          ? (JSON.parse(r.reference_files as string) as string[])
-          : undefined,
-        acceptanceCriteria: (r.acceptance_criteria as string) ?? undefined,
-        priority: r.priority as ProjectTask['priority'],
-        assignedAgentId: (r.assigned_agent_id as string) ?? undefined,
-        status: r.status as ProjectTask['status'],
-        createdBy: r.created_by as ProjectTask['createdBy'],
-        workspaceId: (r.workspace_id as string) ?? undefined,
-        createdAt: r.created_at as number,
-        updatedAt: r.updated_at as number,
-      }));
+      const drizzle = getDatabaseManager().drizzle;
+      return drizzle
+        .select()
+        .from(schema.tasks)
+        .where(eq(schema.tasks.parentTaskId, input.parentTaskId))
+        .orderBy(asc(schema.tasks.createdAt))
+        .all()
+        .map(drizzleTaskToProjectTask);
     }),
 
   get: publicProcedure
     .input(z.object({ id: z.string() }))
     .query(({ input }: { input: any }): ProjectTask | null => {
-      const db = getDatabaseManager().getDb();
-      const r = db
-        .prepare('SELECT * FROM tasks WHERE id = ?')
-        .get(input.id) as Record<string, unknown> | undefined;
+      const drizzle = getDatabaseManager().drizzle;
+      const [r] = drizzle.select().from(schema.tasks).where(eq(schema.tasks.id, input.id)).all();
       if (!r) return null;
-      return {
-        id: r.id as string,
-        projectId: r.project_id as string,
-        parentTaskId: (r.parent_task_id as string) ?? undefined,
-        title: r.title as string,
-        prd: (r.prd as string) ?? undefined,
-        spec: (r.spec as string) ?? undefined,
-        referenceFiles: r.reference_files
-          ? (JSON.parse(r.reference_files as string) as string[])
-          : undefined,
-        acceptanceCriteria: (r.acceptance_criteria as string) ?? undefined,
-        priority: r.priority as ProjectTask['priority'],
-        assignedAgentId: (r.assigned_agent_id as string) ?? undefined,
-        status: r.status as ProjectTask['status'],
-        createdBy: r.created_by as ProjectTask['createdBy'],
-        workspaceId: (r.workspace_id as string) ?? undefined,
-        createdAt: r.created_at as number,
-        updatedAt: r.updated_at as number,
-      };
+      return drizzleTaskToProjectTask(r);
     }),
 
   create: publicProcedure
@@ -3624,34 +3924,31 @@ export const projectTaskRouter = router({
       createdBy: z.enum(['human', 'agent']).default('human'),
     }))
     .mutation(({ input }: { input: any }): ProjectTask => {
-      const db = getDatabaseManager().getDb();
+      const drizzle = getDatabaseManager().drizzle;
       const id = uuidv4();
       const now = Date.now();
-      const refFiles = input.referenceFiles ? JSON.stringify(input.referenceFiles) : null;
-      db.prepare(
-        `INSERT INTO tasks (id, project_id, parent_task_id, title, prd, spec, reference_files, acceptance_criteria, priority, assigned_agent_id, status, created_by, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)`
-      ).run(
-        id, input.projectId, input.parentTaskId ?? null, input.title,
-        input.prd ?? null, input.spec ?? null, refFiles,
-        input.acceptanceCriteria ?? null, input.priority,
-        input.assignedAgentId ?? null, input.createdBy, now, now,
-      );
-      return {
+      drizzle.insert(schema.tasks).values({
         id,
         projectId: input.projectId,
-        parentTaskId: input.parentTaskId,
+        parentTaskId: input.parentTaskId ?? null,
         title: input.title,
-        prd: input.prd,
-        spec: input.spec,
-        referenceFiles: input.referenceFiles,
-        acceptanceCriteria: input.acceptanceCriteria,
+        prd: input.prd ?? null,
+        spec: input.spec ?? null,
+        referenceFiles: input.referenceFiles ? JSON.stringify(input.referenceFiles) : null,
+        acceptanceCriteria: input.acceptanceCriteria ?? null,
         priority: input.priority,
-        assignedAgentId: input.assignedAgentId,
+        assignedAgentId: input.assignedAgentId ?? null,
         status: 'pending',
         createdBy: input.createdBy,
         createdAt: now,
         updatedAt: now,
+      }).run();
+      return {
+        id, projectId: input.projectId, parentTaskId: input.parentTaskId,
+        title: input.title, prd: input.prd, spec: input.spec,
+        referenceFiles: input.referenceFiles, acceptanceCriteria: input.acceptanceCriteria,
+        priority: input.priority, assignedAgentId: input.assignedAgentId,
+        status: 'pending', createdBy: input.createdBy, createdAt: now, updatedAt: now,
       };
     }),
 
@@ -3671,59 +3968,34 @@ export const projectTaskRouter = router({
       }),
     }))
     .mutation(({ input }: { input: any }): ProjectTask => {
-      const db = getDatabaseManager().getDb();
+      const drizzle = getDatabaseManager().drizzle;
       const now = Date.now();
 
-      const existing = db
-        .prepare('SELECT * FROM tasks WHERE id = ?')
-        .get(input.id) as Record<string, unknown> | undefined;
+      const [existing] = drizzle.select({ id: schema.tasks.id }).from(schema.tasks).where(eq(schema.tasks.id, input.id)).all();
       if (!existing) throw new Error(`Task not found: ${input.id}`);
 
-      const fields: string[] = ['updated_at = ?'];
-      const values: unknown[] = [now];
+      const updateFields: Partial<typeof schema.tasks.$inferInsert> = { updatedAt: now };
+      if (input.data.title !== undefined) updateFields.title = input.data.title;
+      if (input.data.prd !== undefined) updateFields.prd = input.data.prd;
+      if (input.data.spec !== undefined) updateFields.spec = input.data.spec;
+      if (input.data.referenceFiles !== undefined) updateFields.referenceFiles = JSON.stringify(input.data.referenceFiles);
+      if (input.data.acceptanceCriteria !== undefined) updateFields.acceptanceCriteria = input.data.acceptanceCriteria;
+      if (input.data.priority !== undefined) updateFields.priority = input.data.priority;
+      if (input.data.assignedAgentId !== undefined) updateFields.assignedAgentId = input.data.assignedAgentId;
+      if (input.data.status !== undefined) updateFields.status = input.data.status;
+      if (input.data.workspaceId !== undefined) updateFields.workspaceId = input.data.workspaceId;
 
-      if (input.data.title !== undefined) { fields.push('title = ?'); values.push(input.data.title); }
-      if (input.data.prd !== undefined) { fields.push('prd = ?'); values.push(input.data.prd); }
-      if (input.data.spec !== undefined) { fields.push('spec = ?'); values.push(input.data.spec); }
-      if (input.data.referenceFiles !== undefined) { fields.push('reference_files = ?'); values.push(JSON.stringify(input.data.referenceFiles)); }
-      if (input.data.acceptanceCriteria !== undefined) { fields.push('acceptance_criteria = ?'); values.push(input.data.acceptanceCriteria); }
-      if (input.data.priority !== undefined) { fields.push('priority = ?'); values.push(input.data.priority); }
-      if (input.data.assignedAgentId !== undefined) { fields.push('assigned_agent_id = ?'); values.push(input.data.assignedAgentId); }
-      if (input.data.status !== undefined) { fields.push('status = ?'); values.push(input.data.status); }
-      if (input.data.workspaceId !== undefined) { fields.push('workspace_id = ?'); values.push(input.data.workspaceId); }
+      drizzle.update(schema.tasks).set(updateFields).where(eq(schema.tasks.id, input.id)).run();
 
-      values.push(input.id);
-      db.prepare(`UPDATE tasks SET ${fields.join(', ')} WHERE id = ?`).run(...values);
-
-      const updated = db
-        .prepare('SELECT * FROM tasks WHERE id = ?')
-        .get(input.id) as Record<string, unknown>;
-      return {
-        id: updated.id as string,
-        projectId: updated.project_id as string,
-        parentTaskId: (updated.parent_task_id as string) ?? undefined,
-        title: updated.title as string,
-        prd: (updated.prd as string) ?? undefined,
-        spec: (updated.spec as string) ?? undefined,
-        referenceFiles: updated.reference_files
-          ? (JSON.parse(updated.reference_files as string) as string[])
-          : undefined,
-        acceptanceCriteria: (updated.acceptance_criteria as string) ?? undefined,
-        priority: updated.priority as ProjectTask['priority'],
-        assignedAgentId: (updated.assigned_agent_id as string) ?? undefined,
-        status: updated.status as ProjectTask['status'],
-        createdBy: updated.created_by as ProjectTask['createdBy'],
-        workspaceId: (updated.workspace_id as string) ?? undefined,
-        createdAt: updated.created_at as number,
-        updatedAt: updated.updated_at as number,
-      };
+      const [updated] = drizzle.select().from(schema.tasks).where(eq(schema.tasks.id, input.id)).all();
+      return drizzleTaskToProjectTask(updated);
     }),
 
   delete: publicProcedure
     .input(z.object({ id: z.string() }))
     .mutation(({ input }: { input: any }): void => {
-      const db = getDatabaseManager().getDb();
-      db.prepare('DELETE FROM tasks WHERE id = ?').run(input.id);
+      const drizzle = getDatabaseManager().drizzle;
+      drizzle.delete(schema.tasks).where(eq(schema.tasks.id, input.id)).run();
     }),
 
   // Task 실행: workspace 자동 생성 + PTY 세션 생성
@@ -3735,42 +4007,33 @@ export const projectTaskRouter = router({
       rows: z.number().int().positive().default(50),
     }))
     .mutation(async ({ input }: { input: any }) => {
-      const db = getDatabaseManager().getDb();
+      const drizzle = getDatabaseManager().drizzle;
       const git = getGitService();
       const { taskId } = input;
 
       // 1. 태스크 조회
-      const task = db
-        .prepare('SELECT * FROM tasks WHERE id = ?')
-        .get(taskId) as Record<string, unknown> | undefined;
+      const [task] = drizzle.select().from(schema.tasks).where(eq(schema.tasks.id, taskId)).all();
       if (!task) throw new Error(`Task not found: ${taskId}`);
 
-      let workspace: Record<string, unknown>;
+      let workspaceRow: typeof schema.workspaces.$inferSelect;
 
-      // 2. task.workspace_id가 있으면 기존 워크스페이스 사용
-      if (task.workspace_id) {
-        const existing = db
-          .prepare('SELECT * FROM workspaces WHERE id = ?')
-          .get(task.workspace_id as string) as Record<string, unknown> | undefined;
-        if (!existing) throw new Error(`Workspace ${task.workspace_id} not found`);
-        workspace = existing;
+      // 2. task.workspaceId가 있으면 기존 워크스페이스 사용
+      if (task.workspaceId) {
+        const [existing] = drizzle.select().from(schema.workspaces).where(eq(schema.workspaces.id, task.workspaceId)).all();
+        if (!existing) throw new Error(`Workspace ${task.workspaceId} not found`);
+        workspaceRow = existing;
       } else {
-        // 3. 새 워크스페이스 생성 — project의 repository_id로 레포 조회
-        const project = db
-          .prepare('SELECT * FROM projects WHERE id = ?')
-          .get(task.project_id as string) as Record<string, unknown> | undefined;
-        if (!project) throw new Error(`Project not found: ${task.project_id}`);
-        if (!project.repository_id) throw new Error(`Project has no repository linked: ${task.project_id}`);
+        // 3. 새 워크스페이스 생성 — project의 repositoryId로 레포 조회
+        const [project] = drizzle.select().from(schema.projects).where(eq(schema.projects.id, task.projectId)).all();
+        if (!project) throw new Error(`Project not found: ${task.projectId}`);
+        if (!project.repositoryId) throw new Error(`Project has no repository linked: ${task.projectId}`);
 
-        const repo = db
-          .prepare('SELECT * FROM repositories WHERE id = ?')
-          .get(project.repository_id as string) as Record<string, unknown> | undefined;
-        if (!repo) throw new Error(`Repository ${project.repository_id} not found`);
+        const [repo] = drizzle.select().from(schema.repositories).where(eq(schema.repositories.id, project.repositoryId)).all();
+        if (!repo) throw new Error(`Repository ${project.repositoryId} not found`);
 
-        const repoPath = repo.path as string;
-        const branchPrefix = (repo.branch_prefix as string) || '';
-        const worktreeBase =
-          (repo.worktree_base_path as string) || path.join(repoPath, '..', 'worktrees');
+        const repoPath = repo.path;
+        const branchPrefix = repo.branchPrefix || '';
+        const worktreeBase = repo.worktreeBasePath || path.join(repoPath, '..', 'worktrees');
         const workspaceName = `task-${taskId.slice(0, 8)}`;
         const branch = `${branchPrefix}${workspaceName}`;
         const worktreePath = path.join(worktreeBase, workspaceName);
@@ -3780,10 +4043,9 @@ export const projectTaskRouter = router({
         await git.addWorktree(repoPath, worktreePath, branch);
 
         // setup_script 실행
-        const setupScript = repo.setup_script as string;
-        if (setupScript?.trim()) {
+        if (repo.setupScript?.trim()) {
           try {
-            await execAsync(setupScript, { cwd: worktreePath });
+            await execAsync(repo.setupScript, { cwd: worktreePath });
           } catch (err) {
             await git.removeWorktree(repoPath, worktreePath);
             throw new Error(`Setup script failed: ${String(err)}`);
@@ -3791,63 +4053,174 @@ export const projectTaskRouter = router({
         }
 
         // DB INSERT — workspaces 테이블
-        db.prepare(
-          `INSERT INTO workspaces (id, name, repository_id, branch, worktree_path, task_id) VALUES (?, ?, ?, ?, ?, ?)`
-        ).run(workspaceId, workspaceName, project.repository_id as string, branch, worktreePath, taskId);
+        drizzle.insert(schema.workspaces).values({
+          id: workspaceId,
+          name: workspaceName,
+          repositoryId: project.repositoryId,
+          branch,
+          worktreePath,
+          taskId,
+        }).run();
 
-        const inserted = db
-          .prepare('SELECT * FROM workspaces WHERE id = ?')
-          .get(workspaceId) as Record<string, unknown> | undefined;
+        const [inserted] = drizzle.select().from(schema.workspaces).where(eq(schema.workspaces.id, workspaceId)).all();
         if (!inserted) {
           await git.removeWorktree(repoPath, worktreePath);
           throw new Error('Failed to insert workspace record');
         }
 
-        // tasks 테이블에 workspace_id 연결
-        db.prepare('UPDATE tasks SET workspace_id = ?, updated_at = ? WHERE id = ?')
-          .run(workspaceId, Date.now(), taskId);
+        // tasks 테이블에 workspaceId 연결
+        drizzle.update(schema.tasks)
+          .set({ workspaceId: workspaceId, updatedAt: Date.now() })
+          .where(eq(schema.tasks.id, taskId))
+          .run();
 
-        workspace = inserted;
+        workspaceRow = inserted;
       }
 
-      // 4. 에이전트 결정: input.agentId > task.assigned_agent_id > 첫 번째 에이전트
+      // 4. 에이전트 결정: input.agentId > task.assignedAgentId > 첫 번째 에이전트
       const resolvedAgentId = selectAgentForTask(
-        db,
+        getDatabaseManager().getDb(),
         {
-          assignedAgentId: task.assigned_agent_id as string | null,
-          title: task.title as string,
-          prd: task.prd as string | null,
+          assignedAgentId: task.assignedAgentId ?? null,
+          title: task.title,
+          prd: task.prd ?? null,
         },
         input.agentId,
       );
       if (!resolvedAgentId) throw new Error('No agents configured. Please add an agent first.');
       const agentId = resolvedAgentId;
 
-      const agent = db
-        .prepare('SELECT * FROM agents WHERE id = ?')
-        .get(agentId) as Record<string, unknown> | undefined;
-      if (!agent) throw new Error(`Agent ${agentId} not found`);
+      const [agentRow] = drizzle.select().from(schema.agents).where(eq(schema.agents.id, agentId)).all();
+      if (!agentRow) throw new Error(`Agent ${agentId} not found`);
 
       // 5. PTY 세션 생성 (기존 session.create 패턴 재활용)
       const sessionId = uuidv4();
-      const sessionName = `${task.title as string} — run`;
-      db.prepare(
-        `INSERT INTO sessions (id, name, workspace_id, agent_id, status, pid, depends_on_session_id, context_source_session_id)
-         VALUES (?, ?, ?, ?, 'pending', NULL, NULL, NULL)`
-      ).run(sessionId, sessionName, workspace.id as string, agentId);
+      const sessionName = `${task.title} — run`;
+      drizzle.insert(schema.sessions).values({
+        id: sessionId,
+        name: sessionName,
+        workspaceId: workspaceRow.id,
+        agentId,
+        status: 'pending',
+        pid: null,
+        dependsOnSessionId: null,
+        contextSourceSessionId: null,
+      }).run();
 
-      const sessionRow = db
-        .prepare('SELECT * FROM sessions WHERE id = ?')
-        .get(sessionId) as SessionRow;
+      const [sessionFinal] = drizzle.select().from(schema.sessions).where(eq(schema.sessions.id, sessionId)).all();
 
       // tasks 상태를 in_progress로 업데이트
-      db.prepare('UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?')
-        .run('in_progress', Date.now(), taskId);
+      drizzle.update(schema.tasks)
+        .set({ status: 'in_progress', updatedAt: Date.now() })
+        .where(eq(schema.tasks.id, taskId))
+        .run();
+
+      const workspaceOut = {
+        id: workspaceRow.id, name: workspaceRow.name, repositoryId: workspaceRow.repositoryId,
+        branch: workspaceRow.branch, worktreePath: workspaceRow.worktreePath, createdAt: workspaceRow.createdAt,
+      };
 
       return {
-        workspace: rowToWorkspace(workspace),
-        session: rowToSession(sessionRow),
+        workspace: workspaceOut,
+        session: rowToSession(sessionFinal as unknown as SessionRow),
       };
+    }),
+});
+
+// ── claudeRouter ─────────────────────────────────────────────────────────────
+
+import Anthropic from '@anthropic-ai/sdk';
+import { TRPCError } from '@trpc/server';
+import { execFile } from 'child_process';
+
+const execFileAsync = promisify(execFile);
+
+type ChatMessage = { role: 'user' | 'assistant'; content: string };
+
+async function callViaCLI(messages: ChatMessage[], systemPrompt: string): Promise<string> {
+  // 시스템 프롬프트 + 이전 대화 기록을 단일 프롬프트로 조합
+  const parts: string[] = [`<system>\n${systemPrompt}\n</system>`];
+
+  if (messages.length > 1) {
+    parts.push('\n<conversation_history>');
+    for (const m of messages.slice(0, -1)) {
+      parts.push(`${m.role === 'user' ? 'Human' : 'Assistant'}: ${m.content}`);
+    }
+    parts.push('</conversation_history>');
+  }
+
+  const last = messages[messages.length - 1];
+  if (last) parts.push(`\n${last.content}`);
+
+  const prompt = parts.join('\n');
+
+  const { stdout } = await execFileAsync(
+    'claude',
+    ['--print', '--model', 'claude-sonnet-4-6', prompt],
+    { timeout: 120_000, maxBuffer: 10 * 1024 * 1024 },
+  );
+  return stdout.trim();
+}
+
+const claudeRouter = router({
+  chat: publicProcedure
+    .input(
+      z.object({
+        messages: z.array(
+          z.object({
+            role: z.enum(['user', 'assistant']),
+            content: z.string(),
+          })
+        ),
+        systemPrompt: z.string(),
+      })
+    )
+    .mutation(async ({ input }) => {
+      const apiKey = process.env.ANTHROPIC_API_KEY;
+
+      // API 키 있으면 SDK 직접 호출, 없으면 Claude Code CLI로 폴백
+      if (apiKey) {
+        const client = new Anthropic({ apiKey });
+        try {
+          const response = await client.messages.create({
+            model: 'claude-sonnet-4-6',
+            max_tokens: 8096,
+            system: input.systemPrompt,
+            messages: input.messages,
+          });
+          const textBlock = response.content.find((block) => block.type === 'text');
+          return { content: textBlock ? textBlock.text : '' };
+        } catch (err) {
+          if (err instanceof Anthropic.APIError) {
+            throw new TRPCError({
+              code: 'INTERNAL_SERVER_ERROR',
+              message: `Anthropic API 오류: ${err.message}`,
+              cause: err,
+            });
+          }
+          throw new TRPCError({
+            code: 'INTERNAL_SERVER_ERROR',
+            message: 'Claude API 호출 중 오류가 발생했습니다',
+            cause: err,
+          });
+        }
+      }
+
+      // Claude Code CLI 폴백
+      try {
+        const content = await callViaCLI(input.messages, input.systemPrompt);
+        return { content };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        const isNotFound = msg.includes('ENOENT') || msg.includes('not found');
+        throw new TRPCError({
+          code: 'INTERNAL_SERVER_ERROR',
+          message: isNotFound
+            ? 'Claude Code CLI를 찾을 수 없습니다. ANTHROPIC_API_KEY를 설정하거나 Claude Code를 설치해주세요.'
+            : `Claude CLI 호출 오류: ${msg}`,
+          cause: err,
+        });
+      }
     }),
 });
 
@@ -3879,6 +4252,7 @@ export const appRouter = router({
   theme: themeRouter,
   project: projectRouter,
   projectTask: projectTaskRouter,
+  claude: claudeRouter,
 });
 
 export type AppRouter = typeof appRouter;

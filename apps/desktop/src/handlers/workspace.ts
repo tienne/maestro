@@ -2,77 +2,103 @@ import { ipcMain } from 'electron';
 import { v4 as uuidv4 } from 'uuid';
 import * as path from 'path';
 import { execSync } from 'child_process';
+import { eq, asc } from 'drizzle-orm';
 import type { DatabaseManager } from '../db/database';
+import * as schema from '../db/schema';
 import type { GitService } from '../services/git';
 import type { Workspace } from '@maestro/shared-types';
 
-function rowToWorkspace(row: Record<string, unknown>): Workspace {
+function rowToWorkspace(row: schema.Workspace): Workspace {
   return {
-    id: row.id as string,
-    name: row.name as string,
-    repositoryId: row.repository_id as string,
-    branch: row.branch as string,
-    worktreePath: row.worktree_path as string,
-    createdAt: row.created_at as string,
+    id: row.id,
+    name: row.name,
+    repositoryId: row.repositoryId,
+    branch: row.branch,
+    worktreePath: row.worktreePath,
+    createdAt: row.createdAt,
   };
 }
 
 export function registerWorkspaceHandlers(db: DatabaseManager, git: GitService): void {
-  const database = db.getDb();
+  const drizzle = db.drizzle;
 
   ipcMain.handle('workspace:list', () => {
-    return database.prepare('SELECT * FROM workspaces ORDER BY created_at').all().map((r) => rowToWorkspace(r as Record<string, unknown>));
+    return drizzle
+      .select()
+      .from(schema.workspaces)
+      .orderBy(asc(schema.workspaces.createdAt))
+      .all()
+      .map(rowToWorkspace);
   });
 
   ipcMain.handle('workspace:create', (_event, args: { name: string; repositoryId: string }) => {
     const { name, repositoryId } = args;
-    const repo = database.prepare('SELECT * FROM repositories WHERE id = ?').get(repositoryId) as Record<string, unknown>;
+
+    const [repo] = drizzle
+      .select()
+      .from(schema.repositories)
+      .where(eq(schema.repositories.id, repositoryId))
+      .all();
     if (!repo) throw new Error(`Repository ${repositoryId} not found`);
 
-    const repoPath = repo.path as string;
-    const branchPrefix = (repo.branch_prefix as string) || '';
-    const worktreeBase = (repo.worktree_base_path as string) || path.join(repoPath, '..', 'worktrees');
+    const repoPath = repo.path;
+    const branchPrefix = repo.branchPrefix || '';
+    const worktreeBase = repo.worktreeBasePath || path.join(repoPath, '..', 'worktrees');
     const branch = `${branchPrefix}${name.toLowerCase().replace(/\s+/g, '-')}`;
     const worktreePath = path.join(worktreeBase, name);
     const id = uuidv4();
 
     git.addWorktree(repoPath, worktreePath, branch);
 
-    const setupScript = repo.setup_script as string;
+    const setupScript = repo.setupScript;
     if (setupScript?.trim()) {
       execSync(setupScript, { cwd: worktreePath, stdio: 'ignore' });
     }
 
-    database
-      .prepare(
-        `INSERT INTO workspaces (id, name, repository_id, branch, worktree_path) VALUES (?, ?, ?, ?, ?)`
-      )
-      .run(id, name, repositoryId, branch, worktreePath);
+    drizzle.insert(schema.workspaces).values({
+      id,
+      name,
+      repositoryId,
+      branch,
+      worktreePath,
+    }).run();
 
-    return rowToWorkspace(database.prepare('SELECT * FROM workspaces WHERE id = ?').get(id) as Record<string, unknown>);
+    const [inserted] = drizzle
+      .select()
+      .from(schema.workspaces)
+      .where(eq(schema.workspaces.id, id))
+      .all();
+    return rowToWorkspace(inserted);
   });
 
   ipcMain.handle('workspace:delete', (_event, args: { id: string }) => {
-    const workspace = database
-      .prepare('SELECT * FROM workspaces WHERE id = ?')
-      .get(args.id) as Record<string, unknown> | undefined;
+    const [workspace] = drizzle
+      .select()
+      .from(schema.workspaces)
+      .where(eq(schema.workspaces.id, args.id))
+      .all();
 
     if (!workspace) throw new Error(`Workspace ${args.id} not found`);
 
-    const repo = database
-      .prepare('SELECT * FROM repositories WHERE id = ?')
-      .get(workspace.repository_id) as Record<string, unknown>;
+    const [repo] = drizzle
+      .select()
+      .from(schema.repositories)
+      .where(eq(schema.repositories.id, workspace.repositoryId))
+      .all();
 
-    const teardownScript = repo?.teardown_script as string;
+    const teardownScript = repo?.teardownScript;
     if (teardownScript?.trim()) {
       try {
-        execSync(teardownScript, { cwd: workspace.worktree_path as string, stdio: 'ignore' });
+        execSync(teardownScript, { cwd: workspace.worktreePath, stdio: 'ignore' });
       } catch {
         // teardown 실패 무시
       }
     }
 
-    git.removeWorktree(repo.path as string, workspace.worktree_path as string);
-    database.prepare('DELETE FROM workspaces WHERE id = ?').run(args.id);
+    if (repo) {
+      git.removeWorktree(repo.path, workspace.worktreePath);
+    }
+
+    drizzle.delete(schema.workspaces).where(eq(schema.workspaces.id, args.id)).run();
   });
 }

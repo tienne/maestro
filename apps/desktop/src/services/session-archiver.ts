@@ -7,7 +7,9 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { app } from 'electron';
 import log from 'electron-log';
+import { eq } from 'drizzle-orm';
 import { getDatabaseManager } from '../db/database';
+import * as schema from '../db/schema';
 
 const ARCHIVE_DIR = path.join(app.getPath('home'), '.maestro', 'sessions');
 
@@ -23,14 +25,14 @@ function ensureArchiveDir(): void {
  */
 export function archiveSession(sessionId: string): void {
   try {
-    const db = getDatabaseManager().getDb();
+    const drizzle = getDatabaseManager().drizzle;
 
     // 세션 정보 조회
-    const session = db.prepare('SELECT * FROM sessions WHERE id = ?').get(sessionId) as {
-      id: string;
-      name: string;
-      created_at: string;
-    } | undefined;
+    const [session] = drizzle
+      .select({ id: schema.sessions.id, name: schema.sessions.name, createdAt: schema.sessions.createdAt })
+      .from(schema.sessions)
+      .where(eq(schema.sessions.id, sessionId))
+      .all();
 
     if (!session) {
       log.warn(`[Archiver] Session ${sessionId} not found, skipping archive`);
@@ -38,8 +40,11 @@ export function archiveSession(sessionId: string): void {
     }
 
     // scrollback 데이터 추출
-    const scrollback = db.prepare('SELECT data FROM session_scrollbacks WHERE session_id = ?')
-      .get(sessionId) as { data: string } | undefined;
+    const [scrollback] = drizzle
+      .select({ data: schema.sessionScrollbacks.data })
+      .from(schema.sessionScrollbacks)
+      .where(eq(schema.sessionScrollbacks.sessionId, sessionId))
+      .all();
 
     if (!scrollback?.data) {
       log.info(`[Archiver] No scrollback data for session ${sessionId}, skipping`);
@@ -54,15 +59,22 @@ export function archiveSession(sessionId: string): void {
       .replace(/\x1B\][^\x07]*\x07/g, '');
 
     const logPath = path.join(ARCHIVE_DIR, `${sessionId}.log`);
-    const header = `# Session: ${session.name}\n# ID: ${session.id}\n# Created: ${session.created_at}\n# Archived: ${new Date().toISOString()}\n\n`;
+    const header = `# Session: ${session.name}\n# ID: ${session.id}\n# Created: ${session.createdAt}\n# Archived: ${new Date().toISOString()}\n\n`;
 
     fs.writeFileSync(logPath, header + clean, 'utf-8');
 
     // DB에 아카이브 레코드 추가
-    db.prepare(
-      `INSERT OR REPLACE INTO session_archives (session_id, session_name, log_path, archived_at)
-       VALUES (?, ?, ?, datetime('now'))`
-    ).run(sessionId, session.name, logPath);
+    drizzle.insert(schema.sessionArchives)
+      .values({
+        sessionId,
+        sessionName: session.name,
+        logPath,
+      })
+      .onConflictDoUpdate({
+        target: schema.sessionArchives.sessionId,
+        set: { sessionName: session.name, logPath },
+      })
+      .run();
 
     log.info(`[Archiver] Session ${sessionId} archived to ${logPath}`);
   } catch (err) {

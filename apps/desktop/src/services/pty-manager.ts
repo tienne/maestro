@@ -95,7 +95,7 @@ export class PtyManager {
 
   write(sessionId: string, data: string): void {
     const p = this.sessions.get(sessionId);
-    if (!p) throw new Error(`PTY session ${sessionId} not found`);
+    if (!p) return;
     p.write(data);
   }
 

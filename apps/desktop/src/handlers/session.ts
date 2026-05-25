@@ -1,54 +1,27 @@
 import { ipcMain } from 'electron';
 import { v4 as uuidv4 } from 'uuid';
+import { eq, desc } from 'drizzle-orm';
 import type { DatabaseManager } from '../db/database';
+import * as schema from '../db/schema';
 import type { PtyManager } from '../services/pty-manager';
 import { getMainWindow } from '../main';
 
-interface SessionRow {
-  id: string;
-  name: string;
-  workspace_id: string;
-  agent_id: string;
-  status: string;
-  pid: number | null;
-  created_at: string;
-}
-
-interface WorkspaceRow {
-  id: string;
-  name: string;
-  repository_id: string;
-  branch: string;
-  worktree_path: string;
-}
-
-interface AgentRow {
-  id: string;
-  name: string;
-  command: string;
-  args: string;
-  env: string;
-}
-
-interface EnvVarRow {
-  key: string;
-  value: string;
-}
-
-function rowToSession(row: SessionRow) {
+function rowToSession(row: schema.Session) {
   return {
     id: row.id,
     name: row.name,
-    workspaceId: row.workspace_id,
-    agentId: row.agent_id,
+    workspaceId: row.workspaceId,
+    agentId: row.agentId,
     status: row.status as 'running' | 'stopped' | 'error',
     pid: row.pid,
-    createdAt: row.created_at,
+    createdAt: row.createdAt,
   };
 }
 
 export function registerSessionHandlers(db: DatabaseManager, ptyManager: PtyManager): void {
-  const database = db.getDb();
+  const drizzle = db.drizzle;
+  // app_state 쿼리는 raw DB 사용 (task-13에서 별도 처리)
+  const rawDb = db.getDb();
 
   // Fire-and-forget PTY 입력 — tRPC 왕복 없이 직접 PTY에 쓴다.
   // 레이턴시 민감 경로이므로 ipcMain.on (응답 없음) 사용.
@@ -61,17 +34,22 @@ export function registerSessionHandlers(db: DatabaseManager, ptyManager: PtyMana
   });
 
   ipcMain.handle('session:list', (_event, args: { workspaceId: string }) => {
-    return database
-      .prepare('SELECT * FROM sessions WHERE workspace_id = ? ORDER BY created_at DESC')
-      .all(args.workspaceId)
-      .map((r) => rowToSession(r as SessionRow));
+    return drizzle
+      .select()
+      .from(schema.sessions)
+      .where(eq(schema.sessions.workspaceId, args.workspaceId))
+      .orderBy(desc(schema.sessions.createdAt))
+      .all()
+      .map(rowToSession);
   });
 
   ipcMain.handle('session:list-all', () => {
-    return database
-      .prepare('SELECT * FROM sessions ORDER BY created_at DESC')
+    return drizzle
+      .select()
+      .from(schema.sessions)
+      .orderBy(desc(schema.sessions.createdAt))
       .all()
-      .map((r) => rowToSession(r as SessionRow));
+      .map(rowToSession);
   });
 
   // session:create — PTY 없이 pending 상태 세션 레코드 생성
@@ -81,28 +59,36 @@ export function registerSessionHandlers(db: DatabaseManager, ptyManager: PtyMana
     (_event, args: { name: string; workspaceId: string; agentId: string }) => {
       const { name, workspaceId, agentId } = args;
 
-      const workspace = database
-        .prepare('SELECT * FROM workspaces WHERE id = ?')
-        .get(workspaceId) as WorkspaceRow | undefined;
+      const [workspace] = drizzle
+        .select()
+        .from(schema.workspaces)
+        .where(eq(schema.workspaces.id, workspaceId))
+        .all();
       if (!workspace) throw new Error(`Workspace ${workspaceId} not found`);
 
-      const agent = database
-        .prepare('SELECT * FROM agents WHERE id = ?')
-        .get(agentId) as AgentRow | undefined;
+      const [agent] = drizzle
+        .select()
+        .from(schema.agents)
+        .where(eq(schema.agents.id, agentId))
+        .all();
       if (!agent) throw new Error(`Agent ${agentId} not found`);
 
       const id = uuidv4();
+      drizzle.insert(schema.sessions).values({
+        id,
+        name,
+        workspaceId,
+        agentId,
+        status: 'pending',
+        pid: null,
+      }).run();
 
-      database
-        .prepare(
-          `INSERT INTO sessions (id, name, workspace_id, agent_id, status, pid)
-           VALUES (?, ?, ?, ?, 'pending', NULL)`
-        )
-        .run(id, name, workspaceId, agentId);
-
-      return rowToSession(
-        database.prepare('SELECT * FROM sessions WHERE id = ?').get(id) as SessionRow
-      );
+      const [inserted] = drizzle
+        .select()
+        .from(schema.sessions)
+        .where(eq(schema.sessions.id, id))
+        .all();
+      return rowToSession(inserted);
     }
   );
 
@@ -113,30 +99,37 @@ export function registerSessionHandlers(db: DatabaseManager, ptyManager: PtyMana
     async (_event, args: { sessionId: string; cols: number; rows: number }) => {
       const { sessionId, cols, rows } = args;
 
-      const session = database
-        .prepare('SELECT * FROM sessions WHERE id = ?')
-        .get(sessionId) as SessionRow | undefined;
+      const [session] = drizzle
+        .select()
+        .from(schema.sessions)
+        .where(eq(schema.sessions.id, sessionId))
+        .all();
       if (!session) throw new Error(`Session ${sessionId} not found`);
 
-      const workspace = database
-        .prepare('SELECT * FROM workspaces WHERE id = ?')
-        .get(session.workspace_id) as WorkspaceRow | undefined;
-      if (!workspace) throw new Error(`Workspace ${session.workspace_id} not found`);
+      const [workspace] = drizzle
+        .select()
+        .from(schema.workspaces)
+        .where(eq(schema.workspaces.id, session.workspaceId))
+        .all();
+      if (!workspace) throw new Error(`Workspace ${session.workspaceId} not found`);
 
-      const agent = database
-        .prepare('SELECT * FROM agents WHERE id = ?')
-        .get(session.agent_id) as AgentRow | undefined;
-      if (!agent) throw new Error(`Agent ${session.agent_id} not found`);
+      const [agent] = drizzle
+        .select()
+        .from(schema.agents)
+        .where(eq(schema.agents.id, session.agentId))
+        .all();
+      if (!agent) throw new Error(`Agent ${session.agentId} not found`);
 
-      // Gather repo env vars
-      const envVarRows = database
+      // Gather repo env vars (JOIN 쿼리 — raw SQL 유지, drizzle join은 복잡도 증가)
+      interface EnvVarRow { key: string; value: string; }
+      const envVarRows = rawDb
         .prepare(
           `SELECT ev.key, ev.value FROM env_vars ev
            JOIN repositories r ON r.id = ev.repository_id
            JOIN workspaces w ON w.repository_id = r.id
            WHERE w.id = ?`
         )
-        .all(session.workspace_id) as EnvVarRow[];
+        .all(session.workspaceId) as EnvVarRow[];
 
       const repoEnv: Record<string, string> = {};
       for (const row of envVarRows) {
@@ -153,7 +146,7 @@ export function registerSessionHandlers(db: DatabaseManager, ptyManager: PtyMana
         agent.command,
         agentArgs,
         mergedEnv,
-        workspace.worktree_path,
+        workspace.worktreePath,
         cols,
         rows
       );
@@ -171,30 +164,35 @@ export function registerSessionHandlers(db: DatabaseManager, ptyManager: PtyMana
         ptyManager.removeOutput(sid);
         ptyManager.removeExit(sid);
         const status = exitCode === 0 ? 'stopped' : 'error';
-        database
-          .prepare('UPDATE sessions SET status = ?, pid = NULL WHERE id = ?')
-          .run(status, sid);
+        drizzle.update(schema.sessions)
+          .set({ status, pid: null })
+          .where(eq(schema.sessions.id, sid))
+          .run();
         const win = getMainWindow();
         if (win && !win.isDestroyed()) {
           win.webContents.send('session-status', { sessionId: sid, status });
         }
       });
 
-      database
-        .prepare('UPDATE sessions SET status = ?, pid = ? WHERE id = ?')
-        .run('running', ptyProcess.pid, sessionId);
+      drizzle.update(schema.sessions)
+        .set({ status: 'running', pid: ptyProcess.pid ?? null })
+        .where(eq(schema.sessions.id, sessionId))
+        .run();
 
-      // Mark last active
-      database
+      // Mark last active (app_state — raw SQL 유지)
+      rawDb
         .prepare(
           `INSERT INTO app_state (key, value) VALUES ('last_session_id', ?)
            ON CONFLICT(key) DO UPDATE SET value = excluded.value`
         )
         .run(JSON.stringify(sessionId));
 
-      return rowToSession(
-        database.prepare('SELECT * FROM sessions WHERE id = ?').get(sessionId) as SessionRow
-      );
+      const [updated] = drizzle
+        .select()
+        .from(schema.sessions)
+        .where(eq(schema.sessions.id, sessionId))
+        .all();
+      return rowToSession(updated);
     }
   );
 
@@ -203,9 +201,10 @@ export function registerSessionHandlers(db: DatabaseManager, ptyManager: PtyMana
     if (ptyManager.isAlive(sessionId)) {
       ptyManager.kill(sessionId);
     }
-    database
-      .prepare('UPDATE sessions SET status = ?, pid = NULL WHERE id = ?')
-      .run('stopped', sessionId);
+    drizzle.update(schema.sessions)
+      .set({ status: 'stopped', pid: null })
+      .where(eq(schema.sessions.id, sessionId))
+      .run();
   });
 
   ipcMain.handle('session:delete', (_event, args: { sessionId: string }) => {
@@ -213,7 +212,7 @@ export function registerSessionHandlers(db: DatabaseManager, ptyManager: PtyMana
     if (ptyManager.isAlive(sessionId)) {
       ptyManager.kill(sessionId);
     }
-    database.prepare('DELETE FROM sessions WHERE id = ?').run(sessionId);
+    drizzle.delete(schema.sessions).where(eq(schema.sessions.id, sessionId)).run();
   });
 
   ipcMain.handle('session:send-input', (_event, args: { sessionId: string; text: string }) => {
@@ -230,29 +229,34 @@ export function registerSessionHandlers(db: DatabaseManager, ptyManager: PtyMana
   ipcMain.handle(
     'session:update-status',
     (_event, args: { sessionId: string; status: string }) => {
-      database
-        .prepare('UPDATE sessions SET status = ? WHERE id = ?')
-        .run(args.status, args.sessionId);
+      drizzle.update(schema.sessions)
+        .set({ status: args.status })
+        .where(eq(schema.sessions.id, args.sessionId))
+        .run();
     }
   );
 
   ipcMain.handle('session:get-last', () => {
-    const row = database
+    // app_state — raw SQL 유지
+    const row = rawDb
       .prepare(`SELECT value FROM app_state WHERE key = 'last_session_id'`)
       .get() as { value: string } | undefined;
 
     if (!row) return null;
 
     const lastId = JSON.parse(row.value) as string;
-    const session = database
-      .prepare('SELECT * FROM sessions WHERE id = ?')
-      .get(lastId) as SessionRow | undefined;
+    const [session] = drizzle
+      .select()
+      .from(schema.sessions)
+      .where(eq(schema.sessions.id, lastId))
+      .all();
 
     return session ? rowToSession(session) : null;
   });
 
   ipcMain.handle('session:set-last-active', (_event, args: { sessionId: string }) => {
-    database
+    // app_state — raw SQL 유지
+    rawDb
       .prepare(
         `INSERT INTO app_state (key, value) VALUES ('last_session_id', ?)
          ON CONFLICT(key) DO UPDATE SET value = excluded.value`
@@ -261,9 +265,11 @@ export function registerSessionHandlers(db: DatabaseManager, ptyManager: PtyMana
   });
 
   ipcMain.handle('session:resume', (_event, args: { sessionId: string }) => {
-    const session = database
-      .prepare('SELECT * FROM sessions WHERE id = ?')
-      .get(args.sessionId) as SessionRow | undefined;
+    const [session] = drizzle
+      .select()
+      .from(schema.sessions)
+      .where(eq(schema.sessions.id, args.sessionId))
+      .all();
 
     if (!session) throw new Error(`Session ${args.sessionId} not found`);
 
@@ -277,8 +283,8 @@ export function registerSessionHandlers(db: DatabaseManager, ptyManager: PtyMana
       });
     }
 
-    // Mark last active
-    database
+    // Mark last active (app_state — raw SQL 유지)
+    rawDb
       .prepare(
         `INSERT INTO app_state (key, value) VALUES ('last_session_id', ?)
          ON CONFLICT(key) DO UPDATE SET value = excluded.value`

@@ -1062,6 +1062,26 @@ export const presetRouter = router({
     }),
 });
 
+// ── claudeRouter ─────────────────────────────────────────────────────────────
+
+export const claudeRouter = router({
+  chat: publicProcedure
+    .input(
+      z.object({
+        messages: z.array(
+          z.object({
+            role: z.enum(['user', 'assistant']),
+            content: z.string(),
+          })
+        ),
+        systemPrompt: z.string(),
+      })
+    )
+    .mutation((): { content: string } => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
+});
+
 // ── Root app router ───────────────────────────────────────────────────────────
 
 /**
@@ -1427,6 +1447,7 @@ export const appRouter = router({
   theme: themeRouter,
   project: projectRouter,
   projectTask: projectTaskRouter,
+  claude: claudeRouter,
 });
 
 // ── Type exports ──────────────────────────────────────────────────────────────
@@ -1453,3 +1474,4 @@ export type ProfileRouter = typeof profileRouter;
 export type ThemeRouter = typeof themeRouter;
 export type ProjectRouter = typeof projectRouter;
 export type ProjectTaskRouter = typeof projectTaskRouter;
+export type ClaudeRouter = typeof claudeRouter;
