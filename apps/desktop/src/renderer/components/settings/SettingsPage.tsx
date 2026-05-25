@@ -9,25 +9,57 @@ import { AgentIcon } from '../shared/AgentIcon';
 import { trpc } from '../../lib/trpc';
 import { toast } from '../../lib/toast';
 import { useWorkspaceStore } from '../../store/workspaceStore';
+import { useAuthStore } from '../../store/authStore';
 import type { Agent, Repository, EnvVar, AgentPreset } from '@maestro/shared-types';
 
-type Section = 'repositories' | 'appearance' | 'terminal' | 'notifications' | 'system' | 'agents' | 'presets' | 'mcp' | 'webhooks' | 'api' | 'relay' | 'shortcuts' | 'plugins' | 'about';
+type Section = 'account' | 'repositories' | 'appearance' | 'terminal' | 'notifications' | 'system' | 'agents' | 'presets' | 'mcp' | 'webhooks' | 'api' | 'relay' | 'shortcuts' | 'plugins' | 'about';
 
-const NAV_ITEMS: { id: Section; label: string }[] = [
-  { id: 'repositories', label: 'Repositories' },
-  { id: 'appearance', label: '외관' },
-  { id: 'terminal', label: 'Terminal' },
-  { id: 'notifications', label: '알림' },
-  { id: 'system', label: 'System' },
-  { id: 'agents', label: 'Agents' },
-  { id: 'presets', label: 'Presets' },
-  { id: 'mcp', label: 'MCP Servers' },
-  { id: 'plugins', label: 'Plugins' },
-  { id: 'webhooks', label: 'Webhooks' },
-  { id: 'api', label: 'API' },
-  { id: 'relay', label: 'Relay' },
-  { id: 'shortcuts', label: '단축키' },
-  { id: 'about', label: '정보' },
+const NAV_GROUPS: { label: string; items: { id: Section; label: string }[] }[] = [
+  {
+    label: '계정',
+    items: [
+      { id: 'account', label: '계정' },
+    ],
+  },
+  {
+    label: '워크스페이스',
+    items: [
+      { id: 'repositories', label: 'Repositories' },
+    ],
+  },
+  {
+    label: '에이전트',
+    items: [
+      { id: 'agents', label: 'Agents' },
+      { id: 'presets', label: 'Presets' },
+      { id: 'mcp', label: 'MCP Servers' },
+      { id: 'plugins', label: 'Plugins' },
+    ],
+  },
+  {
+    label: '외관 & 입력',
+    items: [
+      { id: 'appearance', label: '외관' },
+      { id: 'terminal', label: 'Terminal' },
+      { id: 'shortcuts', label: '단축키' },
+    ],
+  },
+  {
+    label: '자동화 & API',
+    items: [
+      { id: 'webhooks', label: 'Webhooks' },
+      { id: 'api', label: 'API' },
+      { id: 'relay', label: 'Relay' },
+    ],
+  },
+  {
+    label: '시스템',
+    items: [
+      { id: 'notifications', label: '알림' },
+      { id: 'system', label: 'System' },
+      { id: 'about', label: '정보' },
+    ],
+  },
 ];
 
 const SHORTCUTS = [
@@ -86,34 +118,52 @@ export function SettingsPage({ initialSection = 'appearance' }: SettingsPageProp
       <div className="flex flex-1 min-h-0 overflow-hidden">
         {/* Left nav */}
         <nav
-          className="w-44 flex-shrink-0 flex flex-col py-3 gap-0.5 border-r"
+          className="w-48 flex-shrink-0 flex flex-col overflow-y-auto border-r"
           style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-secondary)' }}
         >
-          {NAV_ITEMS.map(({ id, label }) => (
-            <button
-              key={id}
-              onClick={() => handleSectionChange(id)}
-              className="w-full text-left px-4 py-2 text-sm rounded-md mx-1.5 transition-colors"
-              style={{
-                width: 'calc(100% - 12px)',
-                color: activeSection === id ? 'var(--text-primary)' : 'var(--text-secondary)',
-                backgroundColor: activeSection === id ? 'var(--bg-active)' : 'transparent',
-                fontWeight: activeSection === id ? 600 : 400,
-              }}
-              onMouseEnter={(e) => {
-                if (activeSection !== id) e.currentTarget.style.backgroundColor = 'var(--bg-hover)';
-              }}
-              onMouseLeave={(e) => {
-                if (activeSection !== id) e.currentTarget.style.backgroundColor = 'transparent';
-              }}
-            >
-              {label}
-            </button>
+          {NAV_GROUPS.map((group) => (
+            <div key={group.label} className="pt-4 pb-1">
+              {/* 그룹 레이블 */}
+              <div
+                className="px-4 pb-1 text-[10px] font-semibold uppercase tracking-wider"
+                style={{ color: 'var(--text-muted)' }}
+              >
+                {group.label}
+              </div>
+              {/* 항목들 */}
+              {group.items.map(({ id, label }) => (
+                <button
+                  key={id}
+                  onClick={() => handleSectionChange(id)}
+                  className="w-full text-left text-sm transition-colors"
+                  style={{
+                    padding: '6px 12px 6px 16px',
+                    color: activeSection === id ? 'var(--text-primary)' : 'var(--text-secondary)',
+                    backgroundColor: activeSection === id ? 'var(--bg-active)' : 'transparent',
+                    fontWeight: activeSection === id ? 600 : 400,
+                    borderRadius: '6px',
+                    margin: '1px 6px',
+                    width: 'calc(100% - 12px)',
+                  }}
+                  onMouseEnter={(e) => {
+                    if (activeSection !== id) e.currentTarget.style.backgroundColor = 'var(--bg-hover)';
+                  }}
+                  onMouseLeave={(e) => {
+                    if (activeSection !== id) e.currentTarget.style.backgroundColor = 'transparent';
+                  }}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
           ))}
+          {/* 하단 여백 */}
+          <div className="pb-4" />
         </nav>
 
         {/* Right content */}
         <main className="flex-1 overflow-y-auto px-8 py-6">
+          {activeSection === 'account' && <AccountSection />}
           {activeSection === 'repositories' && (
             <RepositoriesSection
               selectedId={repoDetailId}
@@ -2827,6 +2877,74 @@ function ToggleRow({ label, desc, checked, onChange }: { label: string; desc: st
           className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform duration-200 ${checked ? 'translate-x-6' : 'translate-x-1'}`}
         />
       </button>
+    </div>
+  );
+}
+
+/* ─── M11-00: Account Section ─── */
+
+function AccountSection() {
+  const { user, signOut } = useAuthStore();
+  const [isSigningOut, setIsSigningOut] = useState(false);
+
+  const handleSignOut = async () => {
+    setIsSigningOut(true);
+    try {
+      await signOut();
+    } finally {
+      setIsSigningOut(false);
+    }
+  };
+
+  return (
+    <div className="flex flex-col gap-6 max-w-lg">
+      <div>
+        <h2 className="text-sm font-semibold mb-4" style={{ color: 'var(--text-primary)' }}>
+          계정
+        </h2>
+
+        <div
+          className="rounded-xl p-5 flex flex-col gap-4"
+          style={{ backgroundColor: 'var(--bg-secondary)', border: '1px solid var(--border)' }}
+        >
+          {/* Profile */}
+          <div className="flex items-center gap-4">
+            <div
+              className="w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0"
+              style={{ backgroundColor: 'var(--accent)', color: '#fff' }}
+            >
+              {user?.email?.[0]?.toUpperCase() ?? '?'}
+            </div>
+            <div className="flex flex-col gap-0.5 min-w-0">
+              <span className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>
+                {user?.email ?? '알 수 없음'}
+              </span>
+              <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                로그인됨
+              </span>
+            </div>
+          </div>
+
+          {/* Divider */}
+          <div className="h-px" style={{ backgroundColor: 'var(--border)' }} />
+
+          {/* Logout */}
+          <button
+            onClick={handleSignOut}
+            disabled={isSigningOut}
+            className="w-fit px-4 py-2 text-sm rounded-lg transition-colors disabled:opacity-50"
+            style={{
+              backgroundColor: 'var(--bg-primary)',
+              color: 'var(--text-secondary)',
+              border: '1px solid var(--border)',
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.borderColor = '#f87171'; e.currentTarget.style.color = '#f87171'; }}
+            onMouseLeave={(e) => { e.currentTarget.style.borderColor = 'var(--border)'; e.currentTarget.style.color = 'var(--text-secondary)'; }}
+          >
+            {isSigningOut ? '로그아웃 중...' : '로그아웃'}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

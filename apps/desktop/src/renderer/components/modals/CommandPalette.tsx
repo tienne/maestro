@@ -136,8 +136,6 @@ export function CommandPalette({ open, onClose }: Props) {
     // Git actions
     { id: 'git-panel', label: 'Git 패널 열기', group: 'Git', action: () => { setRightPanelTab('git'); onClose(); } },
     { id: 'git-commit', label: 'Git 커밋 패널', group: 'Git', action: () => { setRightPanelTab('git'); onClose(); } },
-    // M3-03: Markdown 패널
-    { id: 'open-markdown', label: 'Open Markdown File', group: 'View', action: () => { useUiStore.getState().openMarkdownPanel(''); onClose(); } },
     // M9-04: Archive Search
     { id: 'search-past-sessions', label: 'Search Past Sessions', group: 'Sessions', action: () => {
       // 아카이브 검색 모드로 전환 — 검색어를 CommandPalette 상태로 전달

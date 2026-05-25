@@ -26,7 +26,6 @@ type Step = 1 | 2 | 3;
 export function OnboardingWizard({ onClose }: { onClose: () => void }) {
   const [step, setStep] = useState<Step>(1);
   const [selectedAgentName, setSelectedAgentName] = useState('Claude Code');
-  const [neverShowAgain, setNeverShowAgain] = useState(false);
   const [repoPath, setRepoPath] = useState('');
   const [isAdding, setIsAdding] = useState(false);
 
@@ -67,9 +66,7 @@ export function OnboardingWizard({ onClose }: { onClose: () => void }) {
   }, [setOnboardingCompleted, onClose]);
 
   const handleSkip = () => {
-    if (neverShowAgain) {
-      setOnboardingCompleted(true);
-    }
+    setOnboardingCompleted(true);
     onClose();
   };
 
@@ -243,29 +240,15 @@ export function OnboardingWizard({ onClose }: { onClose: () => void }) {
             className="flex items-center justify-between px-6 py-4 border-t"
             style={{ borderColor: 'var(--border)' }}
           >
-            <div className="flex items-center gap-2">
-              <button
-                onClick={handleSkip}
-                className="text-xs transition-colors"
-                style={{ color: 'var(--text-muted)' }}
-                onMouseEnter={(e) => (e.currentTarget.style.color = 'var(--text-primary)')}
-                onMouseLeave={(e) => (e.currentTarget.style.color = 'var(--text-muted)')}
-              >
-                건너뛰기
-              </button>
-              <label className="flex items-center gap-1.5 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={neverShowAgain}
-                  onChange={(e) => setNeverShowAgain(e.target.checked)}
-                  className="cursor-pointer"
-                  style={{ accentColor: 'var(--accent)' }}
-                />
-                <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                  다시 보지 않기
-                </span>
-              </label>
-            </div>
+            <button
+              onClick={handleSkip}
+              className="text-xs transition-colors"
+              style={{ color: 'var(--text-muted)' }}
+              onMouseEnter={(e) => (e.currentTarget.style.color = 'var(--text-primary)')}
+              onMouseLeave={(e) => (e.currentTarget.style.color = 'var(--text-muted)')}
+            >
+              건너뛰기
+            </button>
             <div className="flex gap-2">
               {step > 1 && (
                 <button

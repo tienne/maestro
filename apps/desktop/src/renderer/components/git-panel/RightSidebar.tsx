@@ -6,7 +6,6 @@ import { MergePanel } from './MergePanel';
 import { PortsPanel } from './PortsPanel';
 import { BlamePanel } from './BlamePanel';
 import { ConfigPreview } from '../shared/ConfigPreview';
-import { MarkdownPanel } from '../shared/MarkdownPanel';
 import { useWorkspaceStore } from '../../store/workspaceStore';
 import { useSessionStore } from '../../store/sessionStore';
 
@@ -16,11 +15,10 @@ const TABS: { id: RightPanelTab; label: string }[] = [
   { id: 'history', label: 'History' },
   { id: 'merge', label: 'Merge' },
   { id: 'ports', label: 'Ports' },
-  { id: 'markdown', label: 'MD' },
 ];
 
 export function RightSidebar() {
-  const { rightPanelTab, setRightPanelTab, blameFilePath, openBlame, closeBlame, markdownFilePath, setMarkdownFilePath } = useUiStore();
+  const { rightPanelTab, setRightPanelTab, blameFilePath, openBlame, closeBlame } = useUiStore();
   const { workspaces } = useWorkspaceStore();
   const { sessions, activeSessionId } = useSessionStore();
 
@@ -55,13 +53,7 @@ export function RightSidebar() {
 
       {/* Tab content */}
       <div className="flex-1 overflow-hidden">
-        {rightPanelTab === 'markdown' ? (
-          <MarkdownPanel
-            filePath={markdownFilePath}
-            onClose={() => { setMarkdownFilePath(null); setRightPanelTab('files'); }}
-            onChangePath={(p) => setMarkdownFilePath(p)}
-          />
-        ) : rightPanelTab === 'ports' ? (
+        {rightPanelTab === 'ports' ? (
           <PortsPanel />
         ) : !activeWorkspace ? (
           <div className="h-full flex items-center justify-center text-xs px-4 text-center" style={{ color: 'var(--text-muted)' }}>

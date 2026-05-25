@@ -1,5 +1,13 @@
 // Shared TypeScript types between web frontend and any tooling
 
+// ── M11: Auth ────────────────────────────────────────────────────────────────
+
+export interface AuthUser {
+  id: string;
+  email: string;
+  user_metadata: Record<string, unknown>;
+}
+
 export type SessionStatus = 'pending' | 'running' | 'stopped' | 'error' | 'blocked';
 
 export type AgentType = 'claude-code' | 'gemini' | 'codex' | 'opencode';

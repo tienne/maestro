@@ -164,7 +164,7 @@ interface FileTreeProps extends Props {
 }
 
 export function FileTree({ workspace, onBlame }: FileTreeProps) {
-  const { setRightPanelTab } = useUiStore();
+  // useUiStore는 handleFileClick에서 getState()로 직접 접근
 
   const query = trpc.git.readDir.useQuery(
     { dirPath: workspace.worktreePath },
@@ -177,9 +177,9 @@ export function FileTree({ workspace, onBlame }: FileTreeProps) {
   );
 
   const handleFileClick = useCallback((filePath: string) => {
-    // Git diff 패널로 포커스 전환
-    setRightPanelTab('git');
-  }, [setRightPanelTab]);
+    useUiStore.getState().openFileTab(filePath);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // git status를 파일 경로 → 상태 코드 맵으로 변환
   const statusMap: GitStatusMap = {};

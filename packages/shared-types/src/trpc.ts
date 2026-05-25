@@ -1097,6 +1097,12 @@ export const shellRouter = router({
     .query((): { content: string; exists: boolean } => {
       throw new Error('Not implemented — use IPC handler');
     }),
+
+  writeFile: publicProcedure
+    .input(z.object({ filePath: z.string().min(1), content: z.string() }))
+    .mutation((): { success: boolean } => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
 });
 
 // ── M7-04: systemRouter ─────────────────────────────────────────────────────

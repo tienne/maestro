@@ -14,6 +14,7 @@ import { Tooltip } from '../shared/Tooltip';
 import { trpc } from '../../lib/trpc';
 import { sendToTerminal } from '../../hooks/useAppInit';
 import { toast } from '../../lib/toast';
+import { FileEditorPanel } from '../editor/FileEditorPanel';
 import type { Session, SessionLabel } from '@maestro/shared-types';
 import {
   DndContext,
@@ -34,7 +35,7 @@ import { CSS } from '@dnd-kit/utilities';
 
 export function TerminalPanel() {
   const { sessions, activeSessionId, setActiveSession, removeSession, updateSession } = useSessionStore();
-  const { splitLayout, setSplitLayout, panes, setPaneSession, activePaneIndex, setActivePaneIndex, pinnedTabs, tabOrder, setTabOrder } = useUiStore();
+  const { splitLayout, setSplitLayout, panes, setPaneSession, activePaneIndex, setActivePaneIndex, pinnedTabs, tabOrder, setTabOrder, openFileTabs, activeFileTabPath, setActiveFileTabPath, closeFileTab } = useUiStore();
   const { servers, setServers } = useMcpStore();
   const { workspaces } = useWorkspaceStore();
   const [showCreateSession, setShowCreateSession] = useState(false);
@@ -158,6 +159,7 @@ export function TerminalPanel() {
   const rightPaneSessionId = panes[1].sessionId !== panes[0].sessionId ? panes[1].sessionId : null;
 
   const handleTabClick = (sessionId: string) => {
+    setActiveFileTabPath(null);
     setActiveSession(sessionId);
     setPaneSession(activePaneIndex, sessionId);
   };
@@ -217,6 +219,43 @@ export function TerminalPanel() {
                   onClose={() => handleTabClose(session.id)}
                 />
               ))}
+              {/* 파일 에디터 탭 */}
+              {openFileTabs.map((ft) => {
+                const fileName = ft.path.split('/').pop() ?? ft.path;
+                const isActive = activeFileTabPath === ft.path;
+                return (
+                  <div
+                    key={ft.path}
+                    className={`group flex items-center gap-1.5 px-3 border-r transition-colors whitespace-nowrap ${
+                      isActive ? 'font-bold border-b-2 border-b-[var(--accent)]' : 'border-b-2 border-b-transparent'
+                    }`}
+                    style={{
+                      minHeight: '44px',
+                      backgroundColor: isActive ? 'var(--tab-active-bg)' : 'var(--tab-inactive-bg)',
+                      color: isActive ? 'var(--tab-active-text)' : 'var(--tab-inactive-text)',
+                      borderRightColor: 'var(--border)',
+                      cursor: 'pointer',
+                      userSelect: 'none',
+                    }}
+                    onClick={() => setActiveFileTabPath(ft.path)}
+                  >
+                    <span className="text-[10px] opacity-60">📄</span>
+                    <span className="max-w-[120px] truncate text-sm">{fileName}</span>
+                    {ft.isDirty && (
+                      <span className="w-1.5 h-1.5 rounded-full flex-shrink-0" style={{ backgroundColor: 'var(--accent)' }} title="저장되지 않은 변경사항" />
+                    )}
+                    <span
+                      role="button"
+                      onClick={(e) => { e.stopPropagation(); closeFileTab(ft.path); }}
+                      className="opacity-0 group-hover:opacity-100 ml-0.5 w-4 h-4 flex items-center justify-center rounded transition-all cursor-pointer flex-shrink-0 hover:bg-[var(--bg-hover)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+                      title="닫기"
+                    >
+                      x
+                    </span>
+                  </div>
+                );
+              })}
+
               {/* 탭바 내 세션 추가 버튼 */}
               {activeWorkspace && (
                 <Tooltip content="새 세션" shortcut="⌘N">
@@ -312,7 +351,10 @@ export function TerminalPanel() {
 
       {/* Terminal Area + Prompt */}
       <div className="flex-1 overflow-hidden flex flex-col min-h-0">
-        {splitLayout === 'single' ? (
+        {/* 파일 에디터 모드 */}
+        {activeFileTabPath ? (
+          <FileEditorPanel filePath={activeFileTabPath} />
+        ) : splitLayout === 'single' ? (
           // Keep all session terminals mounted — only show the active one.
           // This preserves xterm.js state (scrollback, output) across tab switches.
           <div
@@ -433,11 +475,13 @@ export function TerminalPanel() {
             </div>
           </div>
         )}
-        {/* M3-05: 완료 카드 */}
-        {activeSessionId && (
+        {/* M3-05: 완료 카드 — 파일 에디터 모드에서는 숨김 */}
+        {!activeFileTabPath && activeSessionId && (
           <CompletionCard sessionId={activeSessionId} />
         )}
-        <PromptInput sessionId={activeSessionId} broadcastModeExternal={broadcastMode} />
+        {!activeFileTabPath && (
+          <PromptInput sessionId={activeSessionId} broadcastModeExternal={broadcastMode} />
+        )}
       </div>
 
       {showCreateSession && activeWorkspace && (

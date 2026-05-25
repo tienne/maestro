@@ -64,6 +64,7 @@ Superset 대비 격차 (신규 로드맵 대상)
 | M8 | UX 폴리시 & 온보딩 | 첫 사용자 경험 | 6개 |
 | M9 | 멀티 윈도우 & 공유 | 협업 및 공유 | 4개 |
 | M10 | 플러그인 & 확장 | 커뮤니티 생태계 | 4개 |
+| M11 | 모바일 컴패니언 앱 | 이동 중 AI 세션 원격 채팅 | 5개 |
 
 ---
 
@@ -1013,6 +1014,24 @@ Claude / Codex 외에 사용자가 직접 만든 스크립트를 에이전트로
 
 ---
 
+### M11 — 모바일 컴패니언 앱 (`🟠 P1`)
+
+> 상세 로드맵: [`docs/mobile-roadmap.md`](./mobile-roadmap.md)  
+> Spec ID: `167c08b3` | Spec 파일: `_workspace/mobile_companion_spec.json`
+
+이동 중에도 Maestro 데스크탑의 AI 세션을 모니터링하고 프롬프트를 전송할 수 있는 모바일 앱.  
+React Native/Expo + Supabase(Auth+DB+Realtime) + WebSocket 릴레이 서버(Railway/Render 무료) 기반.
+
+| 기능 ID | 기능 | Phase |
+|---------|------|-------|
+| F-M11-01 | WebSocket 릴레이 서버 | MVP |
+| F-M11-02 | Supabase 백엔드 설정 | MVP |
+| F-M11-03 | 데스크탑-릴레이 WebSocket 연동 | MVP |
+| F-M11-04 | React Native 모바일 앱 | MVP |
+| F-M11-05 | 모바일 푸시 알림 | Phase 2 |
+
+---
+
 #### F-M10-04. 텔레메트리 & 분석 (선택적)
 
 **배경**  
@@ -1059,6 +1078,11 @@ Claude / Codex 외에 사용자가 직접 만든 스크립트를 에이전트로
 | 멀티 윈도우 | M9 | 🟢 P3 | 높음 | 중간 | ✅ Superset 있음 |
 | 세션 내보내기 | M9 | 🟢 P3 | 낮음 | 낮음 | ✅ Superset 있음 |
 | 플러그인 API | M10 | 🟢 P3 | 높음 | 낮음 | ❌ Maestro 차별 |
+| 모바일 릴레이 서버 | M11 | 🟠 P1 | 높음 | 높음 | ❌ Maestro 차별 |
+| 모바일 앱 (세션 목록 + 채팅) | M11 | 🟠 P1 | 높음 | 높음 | ❌ Maestro 차별 |
+| Supabase Auth 연동 | M11 | 🟠 P1 | 중간 | 높음 | ❌ Maestro 차별 |
+| 데스크탑-릴레이 WebSocket 연동 | M11 | 🟡 P2 | 높음 | 높음 | ❌ Maestro 차별 |
+| 모바일 푸시 알림 | M11 | 🟢 P3 | 중간 | 중간 | ❌ Maestro 차별 |
 
 ---
 
@@ -1081,6 +1105,9 @@ M2 (터미널 UX) ──────────────┐          │
               ┌───────┴───────┐
               ▼               ▼
          M9 (공유)       M10 (플러그인)
+              │
+              ▼
+         M11 (모바일 컴패니언)
 ```
 
 ---
@@ -1165,5 +1192,29 @@ appRouter
 ├── pipeline (신규 M4: create, run, status)
 ├── template (신규 M5: list, create, apply, delete)
 ├── webhook (신규 M6: list, create, test, delete)
-└── plugin (신규 M10: list, enable, disable)
+├── plugin (신규 M10: list, enable, disable)
+└── relay (신규 M11: register, status, disconnect)
+```
+
+### M11 인프라 구성
+
+```
+┌─────────────────────────────────────────────────────┐
+│                  무료 인프라 스택                       │
+│                                                     │
+│  Supabase (무료 티어)                                  │
+│  ├── PostgreSQL: desktop_instances, mobile_sessions │
+│  ├── Auth: 이메일 / Google / GitHub OAuth             │
+│  └── Realtime: (선택적 대안 — relay 역할)               │
+│                                                     │
+│  Railway / Render (무료 플랜)                          │
+│  └── relay-server: Node.js WebSocket 중계 서버         │
+│                                                     │
+│  Expo (무료)                                         │
+│  └── apps/mobile: React Native iOS + Android        │
+└─────────────────────────────────────────────────────┘
+
+메시지 흐름:
+모바일 → [Supabase Auth JWT] → 릴레이 서버 → 데스크탑 Electron
+데스크탑 터미널 출력 → 릴레이 서버 → 모바일 ChatScreen
 ```

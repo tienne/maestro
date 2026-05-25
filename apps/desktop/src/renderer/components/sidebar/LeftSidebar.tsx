@@ -416,31 +416,7 @@ export function LeftSidebar() {
       </div>}
 
       {/* Footer */}
-      <div className="border-t px-3 py-2 flex items-center gap-3" style={{ borderColor: 'var(--border)' }}>
-        <Tooltip content="에이전트 설정">
-          <button
-            onClick={() => openSettings('agents')}
-            className="text-xs flex items-center gap-1 transition-colors"
-            style={{ color: 'var(--text-secondary)' }}
-            onMouseEnter={(e) => (e.currentTarget.style.color = 'var(--text-primary)')}
-            onMouseLeave={(e) => (e.currentTarget.style.color = 'var(--text-secondary)')}
-            aria-label="에이전트 설정"
-          >
-            ⚙ Agents
-          </button>
-        </Tooltip>
-        <Tooltip content="MCP 서버 관리">
-          <button
-            onClick={() => openSettings('mcp')}
-            className="text-xs flex items-center gap-1 transition-colors"
-            style={{ color: 'var(--text-secondary)' }}
-            onMouseEnter={(e) => (e.currentTarget.style.color = 'var(--text-primary)')}
-            onMouseLeave={(e) => (e.currentTarget.style.color = 'var(--text-secondary)')}
-            aria-label="MCP 서버 관리"
-          >
-            ⬡ MCP
-          </button>
-        </Tooltip>
+      <div className="border-t px-3 py-2 flex items-center" style={{ borderColor: 'var(--border)' }}>
         <Tooltip content="앱 설정">
           <button
             onClick={() => openSettings()}
