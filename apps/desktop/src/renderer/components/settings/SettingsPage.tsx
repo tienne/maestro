@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
+import { useNavigate } from '@tanstack/react-router';
 import { useTheme } from '../ThemeProvider';
-import { useSettingsStore } from '../../store/settingsStore';
+import { useSettingsStore, DEFAULT_INTERVIEW_SYSTEM_PROMPT } from '../../store/settingsStore';
 import { useUiStore } from '../../store/uiStore';
 import { useAgentStore } from '../../store/agentStore';
 import { useMcpStore, type McpServer } from '../../store/mcpStore';
@@ -10,9 +11,10 @@ import { trpc } from '../../lib/trpc';
 import { toast } from '../../lib/toast';
 import { useWorkspaceStore } from '../../store/workspaceStore';
 import { useAuthStore } from '../../store/authStore';
+import { useAnthropicAuthStore } from '../../store/anthropicAuthStore';
 import type { Agent, Repository, EnvVar, AgentPreset } from '@maestro/shared-types';
 
-type Section = 'account' | 'repositories' | 'appearance' | 'terminal' | 'notifications' | 'system' | 'agents' | 'presets' | 'mcp' | 'webhooks' | 'api' | 'relay' | 'shortcuts' | 'plugins' | 'about';
+type Section = 'account' | 'repositories' | 'appearance' | 'terminal' | 'notifications' | 'system' | 'agents' | 'presets' | 'mcp' | 'webhooks' | 'api' | 'relay' | 'shortcuts' | 'plugins' | 'about' | 'taskCreationAI' | 'anthropicAuth';
 
 const NAV_GROUPS: { label: string; items: { id: Section; label: string }[] }[] = [
   {
@@ -34,6 +36,8 @@ const NAV_GROUPS: { label: string; items: { id: Section; label: string }[] }[] =
       { id: 'presets', label: 'Presets' },
       { id: 'mcp', label: 'MCP Servers' },
       { id: 'plugins', label: 'Plugins' },
+      { id: 'taskCreationAI', label: '태스크 생성 AI' },
+      { id: 'anthropicAuth', label: 'Anthropic 인증' },
     ],
   },
   {
@@ -82,6 +86,7 @@ interface SettingsPageProps {
 }
 
 export function SettingsPage({ initialSection = 'appearance' }: SettingsPageProps) {
+  const navigate = useNavigate();
   const { setCurrentView, settingsRepoId } = useUiStore();
   const [activeSection, setActiveSection] = useState<Section>(initialSection);
   const [repoDetailId, setRepoDetailId] = useState<string | null>(
@@ -101,7 +106,10 @@ export function SettingsPage({ initialSection = 'appearance' }: SettingsPageProp
         style={{ borderColor: 'var(--border)', backgroundColor: 'var(--bg-panel)' }}
       >
         <button
-          onClick={() => setCurrentView('terminal')}
+          onClick={() => {
+            setCurrentView('terminal');
+            void navigate({ to: '/' });
+          }}
           className="text-sm transition-colors"
           style={{ color: 'var(--text-muted)' }}
           onMouseEnter={(e) => (e.currentTarget.style.color = 'var(--text-primary)')}
@@ -184,6 +192,8 @@ export function SettingsPage({ initialSection = 'appearance' }: SettingsPageProp
           {activeSection === 'shortcuts' && <ShortcutsSection />}
           {activeSection === 'plugins' && <PluginsSection />}
           {activeSection === 'about' && <AboutSection />}
+          {activeSection === 'taskCreationAI' && <TaskCreationAISection />}
+          {activeSection === 'anthropicAuth' && <AnthropicAuthSection />}
         </main>
       </div>
     </div>
@@ -2944,6 +2954,215 @@ function AccountSection() {
             {isSigningOut ? '로그아웃 중...' : '로그아웃'}
           </button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+/* ─── Section: 태스크 생성 AI ─── */
+
+function TaskCreationAISection() {
+  const { taskCreationSystemPrompt, setTaskCreationSystemPrompt } = useSettingsStore();
+  const [localValue, setLocalValue] = useState<string>(taskCreationSystemPrompt ?? '');
+
+  const handleSave = () => {
+    setTaskCreationSystemPrompt(localValue.trim() === '' ? undefined : localValue);
+    toast.success('저장됨', '태스크 생성 AI 프롬프트가 저장되었습니다.');
+  };
+
+  const handleReset = () => {
+    setTaskCreationSystemPrompt(undefined);
+    setLocalValue('');
+    toast.info('초기화됨', '기본 프롬프트로 복원되었습니다.');
+  };
+
+  const placeholderPreview = DEFAULT_INTERVIEW_SYSTEM_PROMPT.split('\n').slice(0, 4).join('\n') + '\n...';
+
+  return (
+    <div className="flex flex-col gap-8 max-w-2xl">
+      <SectionHeader
+        title="태스크 생성 AI 인터뷰 프롬프트"
+        desc="새 태스크 생성 시 AI와의 대화를 안내하는 시스템 프롬프트입니다. 비워두면 기본 프롬프트가 사용됩니다."
+      />
+
+      <div className="flex flex-col gap-3">
+        <textarea
+          value={localValue}
+          onChange={(e) => setLocalValue(e.target.value)}
+          placeholder={placeholderPreview}
+          rows={12}
+          className="w-full rounded-lg px-3 py-2.5 text-sm font-mono resize-y focus:outline-none"
+          style={{
+            backgroundColor: 'var(--bg-secondary)',
+            border: '1px solid var(--border)',
+            color: 'var(--text-primary)',
+            minHeight: '200px',
+          }}
+          onFocus={(e) => (e.currentTarget.style.borderColor = 'var(--accent)')}
+          onBlur={(e) => (e.currentTarget.style.borderColor = 'var(--border)')}
+        />
+        <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+          <code className="px-1 py-0.5 rounded text-[11px]" style={{ backgroundColor: 'var(--bg-tertiary, #333)' }}>
+            {'{projectName}'}
+          </code>
+          ,{' '}
+          <code className="px-1 py-0.5 rounded text-[11px]" style={{ backgroundColor: 'var(--bg-tertiary, #333)' }}>
+            {'{repositoryName}'}
+          </code>{' '}
+          변수를 사용하면 현재 프로젝트/레포 이름으로 자동 치환됩니다.
+        </p>
+      </div>
+
+      <div className="flex items-center gap-3">
+        <button
+          onClick={handleSave}
+          className="px-4 py-2 text-sm rounded-lg transition-colors"
+          style={{
+            backgroundColor: 'var(--accent)',
+            color: '#fff',
+          }}
+          onMouseEnter={(e) => (e.currentTarget.style.opacity = '0.85')}
+          onMouseLeave={(e) => (e.currentTarget.style.opacity = '1')}
+        >
+          저장
+        </button>
+        <button
+          onClick={handleReset}
+          className="px-4 py-2 text-sm rounded-lg transition-colors"
+          style={{
+            backgroundColor: 'var(--bg-secondary)',
+            color: 'var(--text-secondary)',
+            border: '1px solid var(--border)',
+          }}
+          onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'var(--bg-hover)')}
+          onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'var(--bg-secondary)')}
+        >
+          기본값으로 초기화
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* ─── Section: Anthropic 인증 ─── */
+
+function AnthropicAuthSection() {
+  const { status, isAuthenticated, source, expiresAt, isLoading, openOAuth, checkStatus } = useAnthropicAuthStore();
+
+  const statusText = {
+    checking: '확인 중...',
+    authenticated: '인증됨',
+    unauthenticated: '미인증',
+    expired: '만료됨',
+  }[status];
+
+  const sourceText = source
+    ? ({
+        'claude-config': 'Claude 설정 파일',
+        keychain: 'macOS Keychain',
+        mastracode: 'Maestro 저장소',
+      } as Record<string, string>)[source]
+    : undefined;
+
+  return (
+    <div className="flex flex-col gap-6">
+      <div>
+        <h3 className="text-sm font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>
+          Anthropic 인증
+        </h3>
+        <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+          AI 채팅 태스크 생성에 사용할 Anthropic 계정 인증을 관리합니다.
+        </p>
+      </div>
+
+      {/* 상태 카드 */}
+      <div
+        className="rounded-lg p-4"
+        style={{ backgroundColor: 'var(--bg-secondary)', border: '1px solid var(--border)' }}
+      >
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            {/* 상태 인디케이터 */}
+            <div
+              className="w-2 h-2 rounded-full"
+              style={{
+                backgroundColor: isAuthenticated
+                  ? '#34D399'
+                  : status === 'expired'
+                    ? '#F59E0B'
+                    : '#6B7280',
+              }}
+            />
+            <div>
+              <div className="text-xs font-medium" style={{ color: 'var(--text-primary)' }}>
+                {statusText}
+              </div>
+              {sourceText && (
+                <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                  출처: {sourceText}
+                </div>
+              )}
+              {expiresAt && isAuthenticated && (
+                <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                  만료: {new Date(expiresAt).toLocaleDateString('ko-KR')}
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            {/* 새로고침 버튼 */}
+            <button
+              onClick={() => void checkStatus()}
+              disabled={isLoading}
+              className="text-xs px-2 py-1 rounded transition-colors"
+              style={{ color: 'var(--text-muted)', backgroundColor: 'var(--bg-hover)' }}
+            >
+              새로고침
+            </button>
+
+            {/* 로그인/재인증 버튼 */}
+            {(!isAuthenticated || status === 'expired') && (
+              <button
+                onClick={() => void openOAuth()}
+                disabled={isLoading}
+                className="text-xs px-3 py-1.5 rounded font-medium transition-colors"
+                style={{
+                  backgroundColor: 'var(--accent)',
+                  color: '#fff',
+                  opacity: isLoading ? 0.6 : 1,
+                }}
+              >
+                {isLoading ? '연결 중...' : 'Anthropic으로 로그인'}
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* 인증 경로 설명 */}
+      <div>
+        <p className="text-xs mb-3 font-medium" style={{ color: 'var(--text-secondary)' }}>
+          자동 인증 탐색 순서
+        </p>
+        {[
+          { label: '1. Claude 설정 파일', desc: '~/.claude/.credentials.json 또는 ~/.claude.json' },
+          { label: '2. macOS Keychain', desc: 'claude-cli 키체인 항목' },
+          { label: '3. Maestro 저장소', desc: '~/Library/Application Support/mastracode/auth.json' },
+        ].map(({ label, desc }) => (
+          <div
+            key={label}
+            className="flex flex-col mb-2 px-3 py-2 rounded"
+            style={{ backgroundColor: 'var(--bg-secondary)' }}
+          >
+            <span className="text-xs font-medium" style={{ color: 'var(--text-primary)' }}>
+              {label}
+            </span>
+            <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+              {desc}
+            </span>
+          </div>
+        ))}
       </div>
     </div>
   );
