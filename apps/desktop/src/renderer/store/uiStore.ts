@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
-export type RightPanelTab = 'files' | 'git' | 'history' | 'merge' | 'ports' | 'markdown';
+export type RightPanelTab = 'files' | 'git' | 'history' | 'merge' | 'ports';
 export type SplitLayout = 'single' | 'horizontal' | 'vertical';
 export type CurrentView = 'terminal' | 'settings';
 export type RelayStatus = 'connected' | 'connecting' | 'disconnected';
@@ -20,8 +20,10 @@ interface UiStore {
   settingsRepoId: string | null;
   settingsSection: string | null;
   blameFilePath: string | null;
-  /** M3-03: 마크다운 패널 파일 경로 */
-  markdownFilePath: string | null;
+  /** 파일 에디터 탭 목록 */
+  openFileTabs: { path: string; isDirty: boolean }[];
+  /** 현재 활성 파일탭 경로 (null이면 터미널 모드) */
+  activeFileTabPath: string | null;
   /** 핀된 탭 세션 ID 목록 */
   pinnedTabs: string[];
   /** 탭 순서 (세션 ID 배열) */
@@ -42,8 +44,10 @@ interface UiStore {
   openSettings: (section?: string) => void;
   openBlame: (filePath: string) => void;
   closeBlame: () => void;
-  setMarkdownFilePath: (filePath: string | null) => void;
-  openMarkdownPanel: (filePath: string) => void;
+  openFileTab: (path: string) => void;
+  closeFileTab: (path: string) => void;
+  setFileDirty: (path: string, isDirty: boolean) => void;
+  setActiveFileTabPath: (path: string | null) => void;
   togglePinTab: (sessionId: string) => void;
   setTabOrder: (order: string[]) => void;
   setRelayStatus: (status: RelayStatus) => void;
@@ -63,7 +67,8 @@ export const useUiStore = create<UiStore>()(
       settingsRepoId: null,
       settingsSection: null,
       blameFilePath: null,
-      markdownFilePath: null,
+      openFileTabs: [],
+      activeFileTabPath: null,
       pinnedTabs: [],
       tabOrder: [],
       relayStatus: 'disconnected',
@@ -87,8 +92,32 @@ export const useUiStore = create<UiStore>()(
       openSettings: (section) => set({ currentView: 'settings', settingsSection: section ?? null }),
       openBlame: (filePath) => set({ blameFilePath: filePath, rightPanelTab: 'files' }),
       closeBlame: () => set({ blameFilePath: null }),
-      setMarkdownFilePath: (filePath) => set({ markdownFilePath: filePath }),
-      openMarkdownPanel: (filePath) => set({ markdownFilePath: filePath, rightPanelTab: 'markdown' }),
+
+      openFileTab: (path) =>
+        set((s) => {
+          const exists = s.openFileTabs.some((ft) => ft.path === path);
+          return {
+            openFileTabs: exists ? s.openFileTabs : [...s.openFileTabs, { path, isDirty: false }],
+            activeFileTabPath: path,
+          };
+        }),
+
+      closeFileTab: (path) =>
+        set((s) => {
+          const remaining = s.openFileTabs.filter((ft) => ft.path !== path);
+          const wasActive = s.activeFileTabPath === path;
+          const newActive = wasActive
+            ? (remaining.length > 0 ? remaining[remaining.length - 1].path : null)
+            : s.activeFileTabPath;
+          return { openFileTabs: remaining, activeFileTabPath: newActive };
+        }),
+
+      setFileDirty: (path, isDirty) =>
+        set((s) => ({
+          openFileTabs: s.openFileTabs.map((ft) => ft.path === path ? { ...ft, isDirty } : ft),
+        })),
+
+      setActiveFileTabPath: (path) => set({ activeFileTabPath: path }),
 
       togglePinTab: (sessionId) =>
         set((s) => {
