@@ -2785,6 +2785,13 @@ export const shellRouter = router({
         return { content: '', exists: false };
       }
     }),
+
+  writeFile: publicProcedure
+    .input(z.object({ filePath: z.string().min(1), content: z.string() }))
+    .mutation(({ input }) => {
+      fs.writeFileSync(input.filePath, input.content, 'utf-8');
+      return { success: true };
+    }),
 });
 
 // ── systemRouter (M7-04) ─────────────────────────────────────────────────────
@@ -3116,42 +3123,52 @@ export const apiKeyRouter = router({
     }),
 });
 
-// ── M6-05: relayRouter ───────────────────────────────────────────────────────
+// ── M6-05 / M11-03: relayRouter ──────────────────────────────────────────────
 
-/** Relay 연결 상태를 메모리에서 관리 */
-let relayState: { status: 'connected' | 'connecting' | 'disconnected'; latencyMs: number | null } = {
-  status: 'disconnected',
-  latencyMs: null,
+import { relayClient } from '../main/relay-client';
+
+// onInputMessage 핸들러: 모바일에서 받은 session:input → 로컬 PTY로 포워딩
+relayClient.onInputMessage = (sessionId: string, data: string) => {
+  try {
+    getPtyManager().write(sessionId, data);
+  } catch {
+    // 존재하지 않는 세션 ID는 무시
+  }
 };
-
-export function getRelayState() {
-  return relayState;
-}
 
 export const relayRouter = router({
   getStatus: publicProcedure.query(() => {
-    return { status: relayState.status, latencyMs: relayState.latencyMs };
+    return { status: relayClient.status, latencyMs: null };
   }),
 
-  connect: publicProcedure.mutation(() => {
-    relayState = { status: 'connecting', latencyMs: null };
-    // 시뮬레이션: 실제 relay 서버 연결 시 WebSocket 기반으로 대체
-    setTimeout(() => {
-      relayState = { status: 'connected', latencyMs: 15 };
-      const win = getMainWindow();
-      if (win && !win.isDestroyed()) {
-        win.webContents.send('relay-status', relayState);
-      }
-    }, 500);
-    return { success: true };
+  getSessions: publicProcedure.query(() => {
+    const db = getDatabaseManager().getDb();
+    const sessions = db
+      .prepare(`SELECT id, name, created_at FROM sessions ORDER BY created_at DESC LIMIT 50`)
+      .all() as { id: string; name: string; created_at: string }[];
+    const result = sessions.map((s) => ({ id: s.id, name: s.name, createdAt: s.created_at }));
+    // 세션 목록을 모바일 클라이언트에 브로드캐스트
+    relayClient.broadcastSessions(result);
+    return result;
   }),
+
+  sendInput: publicProcedure
+    .input(z.object({ sessionId: z.string().min(1), text: z.string() }))
+    .mutation(({ input }) => {
+      getPtyManager().write(input.sessionId, input.text);
+      return { success: true };
+    }),
+
+  connect: publicProcedure
+    .input(z.object({ token: z.string().min(1) }))
+    .mutation(({ input }) => {
+      const url = process.env['RELAY_SERVER_URL'] ?? 'ws://localhost:3001';
+      relayClient.connect(input.token, url);
+      return { success: true };
+    }),
 
   disconnect: publicProcedure.mutation(() => {
-    relayState = { status: 'disconnected', latencyMs: null };
-    const win = getMainWindow();
-    if (win && !win.isDestroyed()) {
-      win.webContents.send('relay-status', relayState);
-    }
+    relayClient.disconnect();
     return { success: true };
   }),
 });

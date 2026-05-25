@@ -98,6 +98,14 @@ app.whenReady().then(async () => {
   const { registerTrpcHandler } = await import('../trpc/ipc');
   registerTrpcHandler();
 
+  // M11-03: 릴레이 서버 연결 (RELAY_SERVER_URL 설정 시에만)
+  if (process.env['RELAY_SERVER_URL']) {
+    const { relayClient } = await import('./relay-client');
+    log.info('[relay] RELAY_SERVER_URL detected — relay client ready (connect via relay.connect tRPC)');
+    // 실제 연결은 사용자 로그인 후 relay.connect 호출 시 이뤄짐
+    void relayClient; // import side-effect: onInputMessage 핸들러 등록
+  }
+
   // HTTP 서버 시작 — CLI가 이 서버를 통해 앱을 제어한다
   try {
     const port = await startHttpServer();
@@ -181,6 +189,14 @@ app.on('before-quit', async () => {
   // HTTP 서버 정지 및 서버 연결 정보 파일 삭제
   await stopHttpServer();
   clearServerConfig();
+
+  // M11-03: 릴레이 연결 정리
+  try {
+    const { relayClient } = await import('./relay-client');
+    relayClient.destroy();
+  } catch {
+    // relay client가 초기화되지 않은 경우 무시
+  }
 
   const { cleanupServices } = await import('../handlers/index');
   await cleanupServices();
