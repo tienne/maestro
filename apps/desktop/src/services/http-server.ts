@@ -167,7 +167,9 @@ export async function startHttpServer(): Promise<number> {
   /** POST /api/remote/sessions — 새 세션 생성 */
   app.post('/api/remote/sessions', authMiddleware, (req: Request, res: Response) => {
     try {
-      const db = getDatabaseManager().getDb();
+      const { eq } = require('drizzle-orm') as typeof import('drizzle-orm');
+      const schema = require('../db/schema') as typeof import('../db/schema');
+      const drizzle = getDatabaseManager().drizzle;
       const { name, workspaceId, agentId } = req.body as {
         name?: string;
         workspaceId?: string;
@@ -179,26 +181,40 @@ export async function startHttpServer(): Promise<number> {
         return;
       }
 
-      const workspace = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(workspaceId);
+      const [workspace] = drizzle
+        .select()
+        .from(schema.workspaces)
+        .where(eq(schema.workspaces.id, workspaceId))
+        .all();
       if (!workspace) {
         res.status(404).json({ error: `Workspace ${workspaceId} not found` });
         return;
       }
 
-      const agent = db.prepare('SELECT * FROM agents WHERE id = ?').get(agentId);
+      const [agent] = drizzle
+        .select()
+        .from(schema.agents)
+        .where(eq(schema.agents.id, agentId))
+        .all();
       if (!agent) {
         res.status(404).json({ error: `Agent ${agentId} not found` });
         return;
       }
 
       const id = crypto.randomUUID();
-      db.prepare(
-        `INSERT INTO sessions (id, name, workspace_id, agent_id, status) VALUES (?, ?, ?, ?, 'pending')`
-      ).run(id, name, workspaceId, agentId);
+      drizzle.insert(schema.sessions).values({
+        id,
+        name,
+        workspaceId,
+        agentId,
+        status: 'pending',
+      }).run();
 
-      const row = db.prepare(
-        'SELECT id, name, workspace_id, agent_id, status, pid, created_at FROM sessions WHERE id = ?'
-      ).get(id) as Record<string, unknown>;
+      const [row] = drizzle
+        .select()
+        .from(schema.sessions)
+        .where(eq(schema.sessions.id, id))
+        .all();
 
       res.status(201).json({ session: row });
     } catch (err) {
@@ -209,10 +225,15 @@ export async function startHttpServer(): Promise<number> {
   /** GET /api/remote/sessions/:id — 세션 상태 조회 */
   app.get('/api/remote/sessions/:id', authMiddleware, (req: Request, res: Response) => {
     try {
-      const db = getDatabaseManager().getDb();
-      const row = db.prepare(
-        'SELECT id, name, workspace_id, agent_id, status, pid, created_at FROM sessions WHERE id = ?'
-      ).get(String(req.params['id'])) as Record<string, unknown> | undefined;
+      const { eq } = require('drizzle-orm') as typeof import('drizzle-orm');
+      const schema = require('../db/schema') as typeof import('../db/schema');
+      const drizzle = getDatabaseManager().drizzle;
+
+      const [row] = drizzle
+        .select()
+        .from(schema.sessions)
+        .where(eq(schema.sessions.id, String(req.params['id'])))
+        .all();
 
       if (!row) {
         res.status(404).json({ error: 'Session not found' });
@@ -227,11 +248,17 @@ export async function startHttpServer(): Promise<number> {
   /** DELETE /api/remote/sessions/:id — 세션 종료 */
   app.delete('/api/remote/sessions/:id', authMiddleware, (req: Request, res: Response) => {
     try {
-      const db = getDatabaseManager().getDb();
+      const { eq } = require('drizzle-orm') as typeof import('drizzle-orm');
+      const schema = require('../db/schema') as typeof import('../db/schema');
+      const drizzle = getDatabaseManager().drizzle;
       const ptyManager = getPtyManager();
       const sessionId = String(req.params['id']);
 
-      const row = db.prepare('SELECT id FROM sessions WHERE id = ?').get(sessionId);
+      const [row] = drizzle
+        .select({ id: schema.sessions.id })
+        .from(schema.sessions)
+        .where(eq(schema.sessions.id, sessionId))
+        .all();
       if (!row) {
         res.status(404).json({ error: 'Session not found' });
         return;
@@ -240,7 +267,10 @@ export async function startHttpServer(): Promise<number> {
       if (ptyManager.isAlive(sessionId)) {
         ptyManager.kill(sessionId);
       }
-      db.prepare('UPDATE sessions SET status = ?, pid = NULL WHERE id = ?').run('stopped', sessionId);
+      drizzle.update(schema.sessions)
+        .set({ status: 'stopped', pid: null })
+        .where(eq(schema.sessions.id, sessionId))
+        .run();
       res.json({ ok: true });
     } catch (err) {
       res.status(500).json({ error: String(err) });

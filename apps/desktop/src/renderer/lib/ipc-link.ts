@@ -14,6 +14,7 @@ import type { AnyTRPCRouter } from '@trpc/server';
 import type { TRPCLink, Operation, TRPCClientRuntime } from '@trpc/client';
 import { observable } from '@trpc/server/observable';
 import { TRPCClientError } from '@trpc/client';
+import superjson from 'superjson';
 
 const CHANNEL = 'electron-trpc';
 
@@ -59,7 +60,11 @@ class IPCBridge {
 
   request(op: Operation, callbacks: PendingEntry['callbacks']): () => void {
     this.pending.set(op.id, { callbacks, type: op.type });
-    this.et.sendMessage({ method: 'request', operation: op });
+    const serializedOp = {
+      ...op,
+      input: superjson.serialize(op.input),
+    };
+    this.et.sendMessage({ method: 'request', operation: serializedOp });
 
     return () => {
       const entry = this.pending.get(op.id);
@@ -94,7 +99,8 @@ export function ipcLink<TRouter extends AnyTRPCRouter>(): TRPCLink<TRouter> {
             }
             const result = msg['result'] as Record<string, unknown> | undefined;
             if (result && 'data' in result) {
-              observer.next({ result: result as Parameters<typeof observer.next>[0]['result'] });
+              const deserializedData = superjson.deserialize(result['data'] as Parameters<typeof superjson.deserialize>[0]);
+              observer.next({ result: { ...result, data: deserializedData } as Parameters<typeof observer.next>[0]['result'] });
               if (op.type !== 'subscription') observer.complete();
             }
           },

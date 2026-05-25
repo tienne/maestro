@@ -339,12 +339,17 @@ export class SessionIntelligenceManager {
   ): void {
     try {
       const { getDatabaseManager } = require('../db/database') as typeof import('../db/database');
-      const db = getDatabaseManager().getDb();
+      const { eq: drizzleEq } = require('drizzle-orm') as typeof import('drizzle-orm');
+      const schema = require('../db/schema') as typeof import('../db/schema');
+      const drizzle = getDatabaseManager().drizzle;
       const cost = inputTokens * COST_PER_INPUT_TOKEN + outputTokens * COST_PER_OUTPUT_TOKEN;
-      db.prepare(
-        `INSERT INTO session_costs (id, session_id, input_tokens, output_tokens, cost_usd)
-         VALUES (?, ?, ?, ?, ?)`,
-      ).run(crypto.randomUUID(), sessionId, inputTokens, outputTokens, cost);
+      drizzle.insert(schema.sessionCosts).values({
+        id: crypto.randomUUID(),
+        sessionId,
+        inputTokens,
+        outputTokens,
+        costUsd: cost,
+      }).run();
     } catch (err) {
       log.warn('[SessionIntelligence] Failed to persist cost entry:', err);
     }

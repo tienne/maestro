@@ -14,6 +14,7 @@
 
 import { ipcMain } from 'electron';
 import { observable } from '@trpc/server/observable';
+import superjson from 'superjson';
 import { appRouter } from './router';
 import type { AppRouter } from './router';
 
@@ -60,7 +61,11 @@ async function handleRequest(
   event: Electron.IpcMainEvent,
   op: Operation,
 ): Promise<void> {
-  const { id, type, path, input } = op;
+  const { id, type, path } = op;
+  // ipc-link가 superjson.serialize()로 직렬화한 input을 역직렬화
+  const input = op.input != null
+    ? superjson.deserialize(op.input as Parameters<typeof superjson.deserialize>[0])
+    : op.input;
 
   const reply = (data: unknown) => {
     if (!event.sender.isDestroyed()) {
@@ -108,7 +113,7 @@ async function handleRequest(
       const obs = result as ReturnType<typeof observable>;
       const subKey = String(id);
       const sub = obs.subscribe({
-        next(data) { reply({ id, result: { type: 'data', data } }); },
+        next(data) { reply({ id, result: { type: 'data', data: superjson.serialize(data) } }); },
         error(err) { replyError('INTERNAL_SERVER_ERROR', err instanceof Error ? err.message : String(err)); subscriptions.delete(subKey); },
         complete() { reply({ id, result: { type: 'stopped' } }); subscriptions.delete(subKey); },
       });
@@ -124,7 +129,7 @@ async function handleRequest(
       getRawInput: async () => input,
     });
 
-    reply({ id, result: { type: 'data', data } });
+    reply({ id, result: { type: 'data', data: superjson.serialize(data) } });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     const code = (err as Record<string, unknown>)?.['code'] ?? 'INTERNAL_SERVER_ERROR';

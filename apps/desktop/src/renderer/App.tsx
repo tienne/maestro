@@ -1,44 +1,17 @@
-import React, { useEffect } from 'react';
-import { TRPCProvider } from './providers/TRPCProvider';
-import { ThemeProvider } from './components/ThemeProvider';
-import { AppShell } from './components/layout/AppShell';
-import { LoginScreen } from './components/auth/LoginScreen';
-import { useAuthStore } from './store/authStore';
+import React from 'react';
+import { RouterProvider, createRouter } from '@tanstack/react-router';
+import { routeTree } from './routeTree.gen';
 
-function AuthGate() {
-  const { user, isLoading, initialize } = useAuthStore();
+// 라우터 인스턴스 생성
+const router = createRouter({ routeTree });
 
-  useEffect(() => {
-    void initialize();
-  }, [initialize]);
-
-  if (isLoading) {
-    return (
-      <div
-        className="fixed inset-0 flex items-center justify-center"
-        style={{ backgroundColor: 'var(--bg-primary)' }}
-      >
-        <div
-          className="w-8 h-8 rounded-full border-2 border-t-transparent animate-spin"
-          style={{ borderColor: 'var(--accent)', borderTopColor: 'transparent' }}
-        />
-      </div>
-    );
+// 타입 안전성을 위한 모듈 선언
+declare module '@tanstack/react-router' {
+  interface Register {
+    router: typeof router;
   }
-
-  if (user === null) {
-    return <LoginScreen />;
-  }
-
-  return <AppShell />;
 }
 
 export default function App(): React.ReactElement {
-  return (
-    <TRPCProvider>
-      <ThemeProvider>
-        <AuthGate />
-      </ThemeProvider>
-    </TRPCProvider>
-  );
+  return <RouterProvider router={router} />;
 }

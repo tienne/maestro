@@ -16,6 +16,53 @@ vi.mock('electron', () => ({
   ipcMain: { handle: vi.fn(), on: vi.fn() },
 }));
 
+// ── drizzle mock ──────────────────────────────────────────────────────────────
+
+const drizzleCallQueue: unknown[][] = [];
+const drizzleInsertRunMock = vi.fn();
+const drizzleUpdateRunMock = vi.fn();
+
+function clearDrizzle() {
+  drizzleCallQueue.length = 0;
+  drizzleInsertRunMock.mockClear();
+  drizzleUpdateRunMock.mockClear();
+}
+
+/** drizzle .all() 다음 호출이 반환할 rows를 큐에 추가 */
+function pushDrizzleResult(...rows: unknown[]) {
+  drizzleCallQueue.push(rows);
+}
+
+const mockDrizzle = {
+  select: (..._: unknown[]) => ({
+    from: (_table: unknown) => ({
+      where: (...__: unknown[]) => ({
+        all: () => drizzleCallQueue.shift() ?? [],
+        get: () => (drizzleCallQueue.shift() ?? [])[0] ?? undefined,
+      }),
+      orderBy: (...__: unknown[]) => ({
+        all: () => drizzleCallQueue.shift() ?? [],
+      }),
+      all: () => drizzleCallQueue.shift() ?? [],
+    }),
+  }),
+  insert: (_table: unknown) => ({
+    values: (_data: unknown) => ({
+      run: drizzleInsertRunMock,
+      returning: vi.fn().mockReturnValue([]),
+      onConflictDoUpdate: (_opts: unknown) => ({ run: vi.fn() }),
+    }),
+  }),
+  update: (_table: unknown) => ({
+    set: (_data: unknown) => ({
+      where: (...__: unknown[]) => ({ run: drizzleUpdateRunMock }),
+    }),
+  }),
+  delete: (_table: unknown) => ({
+    where: (...__: unknown[]) => ({ run: vi.fn() }),
+  }),
+};
+
 // ── 서비스 mock ───────────────────────────────────────────────────────────────
 const mockDb = {
   prepare: vi.fn(),
@@ -23,6 +70,7 @@ const mockDb = {
 
 const mockDatabaseManager = {
   getDb: vi.fn().mockReturnValue(mockDb),
+  drizzle: mockDrizzle,
 };
 
 vi.mock('../db/database', () => ({
@@ -39,6 +87,7 @@ const mockPtyManager = {
   resize: vi.fn(),
   kill: vi.fn(),
   isAlive: vi.fn().mockReturnValue(false),
+  getScrollback: vi.fn().mockReturnValue(null),
 };
 
 vi.mock('../services/pty-manager', () => ({
@@ -83,7 +132,45 @@ vi.mock('../services/wrappers', () => ({
   })),
 }));
 
-// ── mock DB 헬퍼 ──────────────────────────────────────────────────────────────
+vi.mock('../services/session-intelligence', () => ({
+  getSessionIntelligence: vi.fn(() => ({
+    startSession: vi.fn(),
+    feedData: vi.fn(),
+    handleExit: vi.fn(),
+  })),
+}));
+
+vi.mock('../services/teams-watcher', () => ({
+  teamsWatcher: {
+    processOutput: vi.fn(),
+    detachFromSession: vi.fn(),
+    attachToSession: vi.fn(),
+  },
+}));
+
+vi.mock('../services/subagent-handler', () => ({
+  attachSubagentHandler: vi.fn(),
+}));
+
+vi.mock('../services/app-state-service', () => ({
+  AppStateService: {
+    getInstance: vi.fn(() => ({
+      set: vi.fn().mockResolvedValue(undefined),
+      get: vi.fn().mockReturnValue({}),
+      initialize: vi.fn().mockResolvedValue(undefined),
+    })),
+  },
+}));
+
+vi.mock('../services/session-archiver', () => ({
+  archiveSession: vi.fn(),
+}));
+
+vi.mock('../services/error-logger', () => ({
+  writeErrorLog: vi.fn(),
+}));
+
+// ── mock DB 헬퍼 (raw SQL JOIN 쿼리용) ────────────────────────────────────────
 
 type SqlHandler = { run?: (...args: unknown[]) => void; get?: (...args: unknown[]) => unknown; all?: (...args: unknown[]) => unknown[] };
 
@@ -111,34 +198,73 @@ async function getCaller() {
   return createCaller({});
 }
 
+// ── 테스트 픽스처 (drizzle camelCase rows) ────────────────────────────────────
+
+const drizzleRepoRow = {
+  id: 'repo-1',
+  name: 'my-repo',
+  path: '/home/user/my-repo',
+  baseBranch: 'main',
+  branchPrefix: '',
+  color: '#4B8BFF',
+  worktreeBasePath: '',
+  setupScript: '',
+  teardownScript: '',
+  createdAt: '2024-01-01T00:00:00.000Z',
+};
+
+const drizzleWorkspaceRow = {
+  id: 'ws-1',
+  name: 'workspace-1',
+  repositoryId: 'repo-1',
+  branch: 'feat/test',
+  worktreePath: '/projects/repo/feat-test',
+  createdAt: '2024-01-01',
+  hookOnSessionStart: '',
+  hookOnAgentComplete: '',
+  hookOnError: '',
+  taskId: null,
+};
+
+const drizzleAgentRow = {
+  id: 'agent-1',
+  name: 'Claude Code',
+  command: 'claude',
+  args: '[]',
+  env: '{}',
+  isBuiltIn: false,
+  scriptPath: null,
+  scriptContent: null,
+};
+
+const drizzleSessionPendingRow = {
+  id: 'session-1',
+  name: 'My Session',
+  workspaceId: 'ws-1',
+  agentId: 'agent-1',
+  status: 'pending',
+  pid: null,
+  createdAt: '2024-01-01',
+  isFavorite: false,
+  dependsOnSessionId: null,
+  contextSourceSessionId: null,
+  lastExitCode: null,
+};
+
+const drizzleSessionRunningRow = { ...drizzleSessionPendingRow, status: 'running', pid: 42 };
+
 // ── 테스트 ─────────────────────────────────────────────────────────────────────
 
 describe('repository 절차', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    clearDrizzle();
     mockDatabaseManager.getDb.mockReturnValue(mockDb);
   });
 
   describe('repository.list', () => {
     it('저장된 리포지토리 목록을 반환한다', async () => {
-      setupMockDb({
-        'FROM repositories': {
-          all: vi.fn().mockReturnValue([
-            {
-              id: 'repo-1',
-              name: 'my-repo',
-              path: '/home/user/my-repo',
-              base_branch: 'main',
-              branch_prefix: 'feat',
-              color: '#4B8BFF',
-              worktree_base_path: '',
-              setup_script: '',
-              teardown_script: '',
-              created_at: '2024-01-01T00:00:00.000Z',
-            },
-          ]),
-        },
-      });
+      pushDrizzleResult(drizzleRepoRow);
 
       const caller = await getCaller();
       const result = await caller.repository.list();
@@ -153,7 +279,7 @@ describe('repository 절차', () => {
     });
 
     it('리포지토리가 없으면 빈 배열을 반환한다', async () => {
-      setupMockDb({ 'FROM repositories': { all: vi.fn().mockReturnValue([]) } });
+      // 빈 배열 — pushDrizzleResult() 없이 shift()가 undefined를 반환 → ?? []
 
       const caller = await getCaller();
       const result = await caller.repository.list();
@@ -164,33 +290,23 @@ describe('repository 절차', () => {
 
   describe('repository.add', () => {
     it('git 리포지토리를 추가하고 반환한다', async () => {
-      const repoPath = '/home/user/test-repo';
-      const insertedRow = {
-        id: 'new-repo-id',
-        name: 'test-repo',
-        path: repoPath,
-        base_branch: 'main',
-        branch_prefix: '',
-        color: '#4B8BFF',
-        worktree_base_path: '',
-        setup_script: '',
-        teardown_script: '',
-        created_at: '2024-01-01T00:00:00.000Z',
-      };
-
       mockGit.isGitRepo.mockReturnValue(true);
       mockGit.getCurrentBranch.mockReturnValue('main');
 
-      setupMockDb({
-        'INSERT INTO repositories': { run: vi.fn() },
-        'SELECT * FROM repositories WHERE id': { get: vi.fn().mockReturnValue(insertedRow) },
-      });
+      const insertedRow = {
+        ...drizzleRepoRow,
+        id: 'new-repo-id',
+        name: 'test-repo',
+        path: '/home/user/test-repo',
+      };
+      // INSERT 후 SELECT: 1번 호출
+      pushDrizzleResult(insertedRow);
 
       const caller = await getCaller();
-      const result = await caller.repository.add({ path: repoPath });
+      const result = await caller.repository.add({ path: '/home/user/test-repo' });
 
-      expect(mockGit.isGitRepo).toHaveBeenCalledWith(repoPath);
-      expect(result).toMatchObject({ name: 'test-repo', path: repoPath });
+      expect(mockGit.isGitRepo).toHaveBeenCalledWith('/home/user/test-repo');
+      expect(result).toMatchObject({ name: 'test-repo', path: '/home/user/test-repo' });
     });
 
     it('git 리포지토리가 아니면 에러를 던진다', async () => {
@@ -207,17 +323,7 @@ describe('repository 절차', () => {
       mockGit.isGitRepo.mockReturnValue(true);
       mockGit.getCurrentBranch.mockReturnValue('develop');
 
-      const insertedRow = {
-        id: 'id-1', name: 'my-awesome-project', path: repoPath,
-        base_branch: 'develop', branch_prefix: '', color: '#4B8BFF',
-        worktree_base_path: '', setup_script: '', teardown_script: '',
-        created_at: '2024-01-01T00:00:00.000Z',
-      };
-
-      setupMockDb({
-        'INSERT INTO repositories': { run: vi.fn() },
-        'SELECT * FROM repositories WHERE id': { get: vi.fn().mockReturnValue(insertedRow) },
-      });
+      pushDrizzleResult({ ...drizzleRepoRow, id: 'id-1', name: 'my-awesome-project', path: repoPath, baseBranch: 'develop' });
 
       const caller = await getCaller();
       const result = await caller.repository.add({ path: repoPath });
@@ -228,34 +334,19 @@ describe('repository 절차', () => {
 });
 
 describe('session 절차', () => {
-  const workspaceRow = {
-    id: 'ws-1', name: 'workspace-1', repository_id: 'repo-1',
-    branch: 'feat/test', worktree_path: '/projects/repo/feat-test', created_at: '2024-01-01',
-  };
-  const agentRow = {
-    id: 'agent-1', name: 'Claude Code', command: 'claude',
-    args: '[]', env: '{}',
-  };
-
   beforeEach(() => {
     vi.clearAllMocks();
+    clearDrizzle();
     mockDatabaseManager.getDb.mockReturnValue(mockDb);
     mockPtyManager.create.mockReturnValue({ pid: 42 });
   });
 
   describe('session.create', () => {
     it('pending 세션을 생성하고 반환한다', async () => {
-      const sessionRow = {
-        id: 'session-new', name: 'Test Session', workspace_id: 'ws-1',
-        agent_id: 'agent-1', status: 'pending', pid: null, created_at: '2024-01-01',
-      };
-
-      setupMockDb({
-        'FROM workspaces WHERE id': { get: vi.fn().mockReturnValue(workspaceRow) },
-        'FROM agents WHERE id': { get: vi.fn().mockReturnValue(agentRow) },
-        'INSERT INTO sessions': { run: vi.fn() },
-        'FROM sessions WHERE id': { get: vi.fn().mockReturnValue(sessionRow) },
-      });
+      // workspace 조회, agent 조회, session INSERT 후 조회
+      pushDrizzleResult(drizzleWorkspaceRow);
+      pushDrizzleResult(drizzleAgentRow);
+      pushDrizzleResult({ ...drizzleSessionPendingRow, id: 'session-new', name: 'Test Session' });
 
       const caller = await getCaller();
       const result = await caller.session.create({
@@ -269,9 +360,8 @@ describe('session 절차', () => {
     });
 
     it('존재하지 않는 workspace면 에러를 던진다', async () => {
-      setupMockDb({
-        'FROM workspaces WHERE id': { get: vi.fn().mockReturnValue(undefined) },
-      });
+      // workspace 조회 → 빈 배열 (not found)
+      // 아무것도 push하지 않음 → shift() returns undefined → []
 
       const caller = await getCaller();
       await expect(
@@ -280,10 +370,8 @@ describe('session 절차', () => {
     });
 
     it('존재하지 않는 agent면 에러를 던진다', async () => {
-      setupMockDb({
-        'FROM workspaces WHERE id': { get: vi.fn().mockReturnValue(workspaceRow) },
-        'FROM agents WHERE id': { get: vi.fn().mockReturnValue(undefined) },
-      });
+      pushDrizzleResult(drizzleWorkspaceRow);
+      // agent 조회 → 빈 배열 (not found)
 
       const caller = await getCaller();
       await expect(
@@ -293,28 +381,23 @@ describe('session 절차', () => {
   });
 
   describe('session.launch', () => {
-    const sessionRow = {
-      id: 'session-1', name: 'My Session', workspace_id: 'ws-1',
-      agent_id: 'agent-1', status: 'pending', pid: null, created_at: '2024-01-01',
-    };
-    const runningRow = { ...sessionRow, status: 'running', pid: 42 };
-
     it('PTY를 생성하고 세션 상태를 running으로 업데이트한다', async () => {
-      const updateRun = vi.fn();
-      const appStateRun = vi.fn();
+      // 1. sessions.where(sessionId) → pending session
+      pushDrizzleResult(drizzleSessionPendingRow);
+      // 2. workspaces.where(workspaceId) → workspace
+      pushDrizzleResult(drizzleWorkspaceRow);
+      // 3. agents.where(agentId) → agent
+      pushDrizzleResult(drizzleAgentRow);
+      // 4. workspaces.select({hooks}).where(workspaceId) → hooks
+      pushDrizzleResult(drizzleWorkspaceRow);
+      // 5. sessions.update.run() → no result (void)
+      // 6. emitWebhookEvent → webhooks.where(enabled).all() → no webhooks
+      pushDrizzleResult();
+      // 7. sessions.where(sessionId) → running session (final)
+      pushDrizzleResult(drizzleSessionRunningRow);
 
-      setupMockDb({
-        'FROM sessions WHERE id': {
-          get: vi.fn()
-            .mockReturnValueOnce(sessionRow)   // 첫 번째 get: session 조회
-            .mockReturnValueOnce(runningRow),  // 두 번째 get: 업데이트 후 반환
-        },
-        'FROM workspaces WHERE id': { get: vi.fn().mockReturnValue(workspaceRow) },
-        'FROM agents WHERE id': { get: vi.fn().mockReturnValue(agentRow) },
-        'FROM env_vars': { all: vi.fn().mockReturnValue([]) },
-        "UPDATE sessions SET status": { run: updateRun },
-        'INSERT INTO app_state': { run: appStateRun },
-      });
+      // raw SQL: env_vars JOIN query
+      setupMockDb({ 'FROM env_vars': { all: vi.fn().mockReturnValue([]) } });
 
       const caller = await getCaller();
       const result = await caller.session.launch({ sessionId: 'session-1', cols: 80, rows: 24 });
@@ -328,9 +411,7 @@ describe('session 절차', () => {
     });
 
     it('세션이 없으면 에러를 던진다', async () => {
-      setupMockDb({
-        'FROM sessions WHERE id': { get: vi.fn().mockReturnValue(undefined) },
-      });
+      // sessions.where(sessionId) → not found (empty)
 
       const caller = await getCaller();
       await expect(
@@ -339,29 +420,24 @@ describe('session 절차', () => {
     });
 
     it('repo env vars를 agent env에 병합한다', async () => {
-      const agentWithEnv = { ...agentRow, env: JSON.stringify({ AGENT_KEY: 'agent-val' }) };
+      const agentWithEnv = { ...drizzleAgentRow, env: JSON.stringify({ AGENT_KEY: 'agent-val' }) };
+
+      pushDrizzleResult(drizzleSessionPendingRow);
+      pushDrizzleResult(drizzleWorkspaceRow);
+      pushDrizzleResult(agentWithEnv);
+      pushDrizzleResult(drizzleWorkspaceRow);   // hooks
+      pushDrizzleResult();                       // emitWebhookEvent → no webhooks
+      pushDrizzleResult(drizzleSessionRunningRow); // final
 
       setupMockDb({
-        'FROM sessions WHERE id': {
-          get: vi.fn()
-            .mockReturnValueOnce(sessionRow)
-            .mockReturnValueOnce(runningRow),
-        },
-        'FROM workspaces WHERE id': { get: vi.fn().mockReturnValue(workspaceRow) },
-        'FROM agents WHERE id': { get: vi.fn().mockReturnValue(agentWithEnv) },
         'FROM env_vars': {
-          all: vi.fn().mockReturnValue([
-            { key: 'REPO_KEY', value: 'repo-val' },
-          ]),
+          all: vi.fn().mockReturnValue([{ key: 'REPO_KEY', value: 'repo-val' }]),
         },
-        'UPDATE sessions SET status': { run: vi.fn() },
-        'INSERT INTO app_state': { run: vi.fn() },
       });
 
       const caller = await getCaller();
       await caller.session.launch({ sessionId: 'session-1', cols: 80, rows: 24 });
 
-      // ptyManager.create 3번째 인자(env)에 둘 다 포함돼야 함
       const callEnv = mockPtyManager.create.mock.calls[0][3] as Record<string, string>;
       expect(callEnv).toMatchObject({ REPO_KEY: 'repo-val', AGENT_KEY: 'agent-val' });
     });

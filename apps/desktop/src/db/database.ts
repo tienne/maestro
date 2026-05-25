@@ -2,117 +2,44 @@ import Database from 'better-sqlite3';
 import * as path from 'path';
 import { app } from 'electron';
 import log from 'electron-log';
+import { drizzle } from 'drizzle-orm/better-sqlite3';
+import { migrate as drizzleMigrate } from 'drizzle-orm/better-sqlite3/migrator';
+import type { BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
+import * as schema from './schema';
 
 export class DatabaseManager {
   private db: Database.Database;
+  /** drizzle-orm 인스턴스 — 타입 안전 쿼리에 사용 */
+  public drizzle: BetterSQLite3Database<typeof schema>;
 
   constructor(dbPath?: string) {
     const resolvedPath = dbPath ?? path.join(app.getPath('userData'), 'maestro.db');
     this.db = new Database(resolvedPath);
     this.db.pragma('journal_mode = WAL');
     this.db.pragma('foreign_keys = ON');
+    this.drizzle = drizzle(this.db, { schema });
     this.initialize();
     log.info(`Database initialized at ${resolvedPath}`);
   }
 
+  /**
+   * drizzle-kit 마이그레이션을 실행한다.
+   * `drizzle/` 폴더의 SQL 파일을 순서대로 적용하며, 이미 적용된 파일은 건너뛴다.
+   */
+  migrate(migrationsFolder: string): void {
+    drizzleMigrate(this.drizzle, { migrationsFolder });
+    log.info(`Drizzle migrations applied from ${migrationsFolder}`);
+  }
+
   private initialize(): void {
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS repositories (
-        id          TEXT PRIMARY KEY,
-        name        TEXT NOT NULL,
-        path        TEXT NOT NULL UNIQUE,
-        color       TEXT NOT NULL DEFAULT '#6366f1',
-        branch_prefix    TEXT NOT NULL DEFAULT '',
-        base_branch      TEXT NOT NULL DEFAULT 'main',
-        worktree_base_path TEXT NOT NULL DEFAULT '',
-        setup_script     TEXT NOT NULL DEFAULT '',
-        teardown_script  TEXT NOT NULL DEFAULT '',
-        created_at  TEXT NOT NULL DEFAULT (datetime('now'))
-      );
+    // drizzle migrate로 테이블 생성 — schema.ts 기준 전체 DDL 적용
+    // 개발: out/main/ → out/drizzle/  (빌드 후 copyDrizzleMigrationsPlugin이 복사)
+    // 소스: src/db/ → ../../drizzle/ (vite dev 모드에서는 ts-node 경로)
+    const migrationsFolder = path.join(__dirname, '..', 'drizzle');
+    this.migrate(migrationsFolder);
 
-      CREATE TABLE IF NOT EXISTS env_vars (
-        id              TEXT PRIMARY KEY,
-        repository_id   TEXT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
-        key             TEXT NOT NULL,
-        value           TEXT NOT NULL,
-        UNIQUE(repository_id, key)
-      );
-
-      CREATE TABLE IF NOT EXISTS workspaces (
-        id              TEXT PRIMARY KEY,
-        name            TEXT NOT NULL,
-        repository_id   TEXT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
-        branch          TEXT NOT NULL,
-        worktree_path   TEXT NOT NULL,
-        created_at      TEXT NOT NULL DEFAULT (datetime('now'))
-      );
-
-      CREATE TABLE IF NOT EXISTS agents (
-        id          TEXT PRIMARY KEY,
-        name        TEXT NOT NULL,
-        command     TEXT NOT NULL,
-        args        TEXT NOT NULL DEFAULT '[]',
-        env         TEXT NOT NULL DEFAULT '{}',
-        is_built_in INTEGER NOT NULL DEFAULT 0
-      );
-
-      CREATE TABLE IF NOT EXISTS sessions (
-        id            TEXT PRIMARY KEY,
-        name          TEXT NOT NULL,
-        workspace_id  TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-        agent_id      TEXT NOT NULL REFERENCES agents(id),
-        status        TEXT NOT NULL DEFAULT 'stopped',
-        pid           INTEGER,
-        created_at    TEXT NOT NULL DEFAULT (datetime('now'))
-      );
-
-      CREATE TABLE IF NOT EXISTS mcp_servers (
-        id          TEXT PRIMARY KEY,
-        name        TEXT NOT NULL,
-        url         TEXT NOT NULL UNIQUE,
-        enabled     INTEGER NOT NULL DEFAULT 1,
-        status      TEXT NOT NULL DEFAULT 'offline',
-        error_msg   TEXT,
-        created_at  TEXT NOT NULL DEFAULT (datetime('now'))
-      );
-
-      CREATE TABLE IF NOT EXISTS app_state (
-        key   TEXT PRIMARY KEY,
-        value TEXT NOT NULL
-      );
-
-      CREATE TABLE IF NOT EXISTS session_scrollbacks (
-        session_id  TEXT PRIMARY KEY,
-        data        TEXT NOT NULL DEFAULT '',
-        updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
-      );
-
-      CREATE TABLE IF NOT EXISTS prompt_history (
-        id          TEXT PRIMARY KEY,
-        session_id  TEXT NOT NULL,
-        text        TEXT NOT NULL,
-        created_at  TEXT NOT NULL DEFAULT (datetime('now'))
-      );
-      CREATE INDEX IF NOT EXISTS idx_prompt_history_session ON prompt_history(session_id, created_at DESC);
-
-      -- 앱 재시작 시 PTY 프로세스는 모두 사라지므로 running/pending → stopped 리셋
-      UPDATE sessions SET status = 'stopped', pid = NULL WHERE status IN ('running', 'pending');
-
-      CREATE TABLE IF NOT EXISTS tiled_layouts (
-        id           TEXT PRIMARY KEY,
-        workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-        mosaic_state TEXT NOT NULL DEFAULT '{}',
-        updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
-      );
-
-      CREATE TABLE IF NOT EXISTS panes (
-        id         TEXT PRIMARY KEY,
-        layout_id  TEXT NOT NULL REFERENCES tiled_layouts(id) ON DELETE CASCADE,
-        type       TEXT NOT NULL DEFAULT 'terminal',
-        session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
-        position   TEXT NOT NULL DEFAULT '{}'
-      );
-    `);
+    // 앱 재시작 시 PTY 프로세스는 모두 사라지므로 running/pending → stopped 리셋
+    this.db.exec(`UPDATE sessions SET status = 'stopped', pid = NULL WHERE status IN ('running', 'pending')`);
 
     this.seedBuiltInAgents();
     this.migrateSessionsFavorite();
@@ -125,6 +52,7 @@ export class DatabaseManager {
     this.migrateM7Performance();
     this.migrateM9Sharing();
     this.migrateM10Plugins();
+    this.migrateM11AgentEditor();
   }
 
   /** M2-06: sessions 테이블에 is_favorite 컬럼 추가 (기존 DB 마이그레이션) */
@@ -396,6 +324,52 @@ export class DatabaseManager {
     }
     if (!cols.some((c) => c.name === 'script_content')) {
       this.db.exec(`ALTER TABLE agents ADD COLUMN script_content TEXT`);
+    }
+  }
+
+  /** M11: AI Agent Editor — projects, tasks 테이블 생성 + workspaces.task_id 컬럼 추가 */
+  private migrateM11AgentEditor(): void {
+    // projects 테이블
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS projects (
+        id            TEXT PRIMARY KEY,
+        name          TEXT NOT NULL,
+        description   TEXT,
+        repository_id TEXT REFERENCES repositories(id) ON DELETE SET NULL,
+        created_at    INTEGER NOT NULL,
+        updated_at    INTEGER NOT NULL
+      );
+    `);
+
+    // tasks 테이블
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS tasks (
+        id                  TEXT PRIMARY KEY,
+        project_id          TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        parent_task_id      TEXT REFERENCES tasks(id) ON DELETE SET NULL,
+        title               TEXT NOT NULL,
+        prd                 TEXT,
+        spec                TEXT,
+        reference_files     TEXT,
+        acceptance_criteria TEXT,
+        priority            TEXT NOT NULL DEFAULT 'medium',
+        assigned_agent_id   TEXT,
+        status              TEXT NOT NULL DEFAULT 'pending',
+        created_by          TEXT NOT NULL DEFAULT 'human',
+        workspace_id        TEXT,
+        created_at          INTEGER NOT NULL,
+        updated_at          INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_id);
+      CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(project_id, status);
+    `);
+
+    // workspaces 테이블에 task_id 컬럼 추가
+    const wsCols = this.db
+      .prepare(`PRAGMA table_info(workspaces)`)
+      .all() as Array<{ name: string }>;
+    if (!wsCols.some((c) => c.name === 'task_id')) {
+      this.db.exec(`ALTER TABLE workspaces ADD COLUMN task_id TEXT REFERENCES tasks(id) ON DELETE SET NULL`);
     }
   }
 
