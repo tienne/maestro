@@ -1,4 +1,6 @@
 import { useState, useMemo, useCallback } from 'react';
+import { ChevronRight, Plus, Settings } from 'lucide-react';
+import { useNavigate } from '@tanstack/react-router';
 import { useRepositoryStore } from '../../store/repositoryStore';
 import { useWorkspaceStore } from '../../store/workspaceStore';
 import { useSessionStore } from '../../store/sessionStore';
@@ -24,9 +26,7 @@ import {
   SortableContext,
   sortableKeyboardCoordinates,
   verticalListSortingStrategy,
-  useSortable,
 } from '@dnd-kit/sortable';
-import { CSS } from '@dnd-kit/utilities';
 import type { Workspace, Repository, IdeType } from '@maestro/shared-types';
 
 type LeftTab = 'repos' | 'projects' | 'dashboard';
@@ -39,8 +39,9 @@ const IDE_OPTIONS: { id: IdeType; label: string; shortLabel: string }[] = [
 ];
 
 export function LeftSidebar() {
+  const navigate = useNavigate();
   const { repositories, removeRepository } = useRepositoryStore();
-  const { workspaces, removeWorkspace, repoOrder, setRepoOrder } = useWorkspaceStore();
+  const { workspaces, activeWorkspaceId, setActiveWorkspace, removeWorkspace, repoOrder, setRepoOrder } = useWorkspaceStore();
   const { sessions, activeSessionId } = useSessionStore();
   const { openRepoSettings, openSettings } = useUiStore();
 
@@ -83,9 +84,10 @@ export function LeftSidebar() {
     setRepoOrder(newOrder);
   }, [sortedRepositories, setRepoOrder]);
 
-  // active workspace derived from active session
+  // active workspace: workspaceStore.activeWorkspaceId를 1차 소스로,
+  // 없으면 activeSession의 workspaceId로 fallback
   const activeSession = sessions.find((s) => s.id === activeSessionId);
-  const activeWorkspace = workspaces.find((w) => w.id === activeSession?.workspaceId);
+  const derivedActiveWorkspaceId = activeWorkspaceId ?? activeSession?.workspaceId ?? null;
 
   const openInIdeMutation = trpc.workspace.openInIde.useMutation();
   const openPathMutation = trpc.shell.openPath.useMutation();
@@ -136,7 +138,7 @@ export function LeftSidebar() {
         { separator: true },
         {
           label: 'Settings',
-          onClick: () => openRepoSettings(repo.id),
+          onClick: () => void navigate({ to: '/settings/projects/$projectId', params: { projectId: repo.id } }),
         },
         {
           label: 'Reveal in Finder',
@@ -197,25 +199,16 @@ export function LeftSidebar() {
   }, []);
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full bg-sidebar text-sidebar-foreground">
       {/* Header */}
-      <div
-        className="flex items-center justify-between px-3 py-2 border-b"
-        style={{ borderColor: 'var(--border)' }}
-      >
+      <div className="flex items-center justify-between px-3 py-2 border-b border-border">
         <span className="flex items-center gap-2">
-          <span
-            className="text-xs font-semibold uppercase tracking-wider"
-            style={{ color: 'var(--text-secondary)' }}
-          >
+          <span className="text-[13px] font-semibold text-foreground">
             Maestro
           </span>
           {totalRunningCount > 0 && (
-            <span
-              className="text-[10px] leading-none px-1.5 py-0.5 rounded-full font-medium"
-              style={{ color: '#22c55e', backgroundColor: 'rgba(34, 197, 94, 0.12)' }}
-            >
-              실행 중 {totalRunningCount}
+            <span className="text-[10px] leading-none px-1.5 py-0.5 rounded-full font-medium text-emerald-400 bg-emerald-500/10">
+              {totalRunningCount} running
             </span>
           )}
         </span>
@@ -223,21 +216,19 @@ export function LeftSidebar() {
           <Tooltip content="레포지토리 추가">
             <button
               onClick={() => setShowAddRepo(true)}
-              className="text-lg leading-none transition-colors"
+              className="size-5 flex items-center justify-center rounded text-muted-foreground hover:text-foreground hover:bg-accent transition-all"
               // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              style={{ color: 'var(--text-secondary)', ...({ WebkitAppRegion: 'no-drag' } as any) }}
-              onMouseEnter={(e) => (e.currentTarget.style.color = 'var(--text-primary)')}
-              onMouseLeave={(e) => (e.currentTarget.style.color = 'var(--text-secondary)')}
+              style={{ ...({ WebkitAppRegion: 'no-drag' } as any) }}
               aria-label="레포지토리 추가"
             >
-              +
+              <Plus size={13} />
             </button>
           </Tooltip>
         )}
       </div>
 
-      {/* Tabs: Repos | Projects | Dashboard */}
-      <div className="flex flex-shrink-0 border-b" style={{ borderColor: 'var(--border)' }} role="tablist" aria-label="사이드바 탭">
+      {/* Tabs: Repos | Tasks | Agents */}
+      <div className="flex flex-shrink-0 border-b border-border" role="tablist" aria-label="사이드바 탭">
         {([['repos', 'Repos'], ['projects', 'Tasks'], ['dashboard', 'Agents']] as [LeftTab, string][]).map(([tab, label]) => (
           <button
             key={tab}
@@ -270,171 +261,156 @@ export function LeftSidebar() {
       )}
 
       {/* Repository Tree (repos tab only) */}
-      {leftTab === 'repos' && <div className="flex-1 overflow-y-auto py-1">
-        {repositories.length === 0 ? (
-          <EmptyState
-            icon="📁"
-            title="레포지토리를 추가해보세요"
-            description="프로젝트 폴더를 추가하여 시작하세요"
-            action={{ label: '+ 추가', onClick: () => setShowAddRepo(true) }}
-          />
-        ) : (
-          <DndContext sensors={dndSensors} collisionDetection={closestCenter} onDragEnd={handleRepoDragEnd}>
-          <SortableContext items={sortedRepositories.map((r) => r.id)} strategy={verticalListSortingStrategy}>
-          {sortedRepositories.map((repo) => {
-            const repoWorkspaces = workspaces.filter((w) => w.repositoryId === repo.id);
-            const isExpanded = expandedRepoIds.has(repo.id);
+      {leftTab === 'repos' && (
+        <div className="flex-1 overflow-y-auto py-1">
+          {repositories.length === 0 ? (
+            <EmptyState
+              icon="📁"
+              title="레포지토리를 추가해보세요"
+              description="프로젝트 폴더를 추가하여 시작하세요"
+              action={{ label: '+ 추가', onClick: () => setShowAddRepo(true) }}
+            />
+          ) : (
+            <DndContext sensors={dndSensors} collisionDetection={closestCenter} onDragEnd={handleRepoDragEnd}>
+              <SortableContext items={sortedRepositories.map((r) => r.id)} strategy={verticalListSortingStrategy}>
+                {sortedRepositories.map((repo) => {
+                  const repoWorkspaces = workspaces.filter((w) => w.repositoryId === repo.id);
+                  const isExpanded = expandedRepoIds.has(repo.id);
 
-            return (
-              <div key={repo.id}>
-                {/* Repository Header */}
-                <div
-                  className="flex items-center gap-1.5 px-2 py-2 cursor-pointer group transition-colors"
-                  style={{ color: 'var(--text-primary)' }}
-                  onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'var(--bg-hover)')}
-                  onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
-                  onClick={() => toggleRepo(repo.id)}
-                  onContextMenu={(e) => openRepoCtxMenu(e, repo)}
-                >
-                  <span
-                    className={`text-[10px] transition-transform flex-shrink-0 ${isExpanded ? 'rotate-90' : ''}`}
-                    style={{ color: 'var(--text-muted)' }}
-                  >
-                    ▶
-                  </span>
-                  <span
-                    className="w-2 h-2 rounded-full flex-shrink-0"
-                    style={{ backgroundColor: repo.color }}
-                  />
-                  <span
-                    className="text-xs truncate flex-1 font-medium"
-                    style={{ color: 'var(--text-primary)' }}
-                  >
-                    {repo.name}
-                  </span>
-                  <div className="opacity-0 group-hover:opacity-100 flex items-center gap-0.5 transition-opacity">
-                    <button
-                      onClick={(e) => { e.stopPropagation(); handleAddWorkspace(repo.id); }}
-                      className="text-sm leading-none px-1.5 py-1 rounded transition-colors"
-                      style={{ color: 'var(--text-secondary)' }}
-                      onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)'; e.currentTarget.style.backgroundColor = 'var(--bg-hover)'; }}
-                      onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-secondary)'; e.currentTarget.style.backgroundColor = 'transparent'; }}
-                      title="New Workspace"
-                    >
-                      +
-                    </button>
-                  </div>
-                </div>
-
-                {/* Workspaces */}
-                {isExpanded && (
-                  <div>
-                    {repoWorkspaces.length === 0 ? (
-                      <div className="pl-8 pr-3 py-1.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
-                        No workspaces.{' '}
+                  return (
+                    <div key={repo.id}>
+                      {/* Repository Header */}
+                      <div
+                        className="flex items-center gap-2 px-3 py-2 cursor-pointer group hover:bg-accent/40 rounded-md mx-1 transition-colors"
+                        onClick={() => toggleRepo(repo.id)}
+                        onContextMenu={(e) => openRepoCtxMenu(e, repo)}
+                      >
+                        <ChevronRight
+                          size={10}
+                          className={`text-muted-foreground transition-transform shrink-0 ${isExpanded ? 'rotate-90' : ''}`}
+                        />
+                        <span
+                          className="w-2 h-2 rounded-full shrink-0"
+                          style={{ backgroundColor: repo.color }}
+                        />
+                        <span className="text-[13px] font-medium text-foreground truncate flex-1">
+                          {repo.name}
+                        </span>
                         <button
-                          onClick={() => handleAddWorkspace(repo.id)}
-                          style={{ color: 'var(--accent)' }}
+                          onClick={(e) => { e.stopPropagation(); handleAddWorkspace(repo.id); }}
+                          className="opacity-0 group-hover:opacity-100 size-5 flex items-center justify-center rounded hover:bg-accent text-muted-foreground hover:text-foreground transition-all shrink-0"
+                          title="New Workspace"
                         >
-                          Create one
+                          <Plus size={12} />
                         </button>
                       </div>
-                    ) : (
-                      repoWorkspaces.map((ws) => {
-                        const isActive = activeWorkspace?.id === ws.id;
-                        const wsRunningCount = sessions.filter(
-                          (s) => s.workspaceId === ws.id && s.status === 'running'
-                        ).length;
 
-                        return (
-                          <div key={ws.id}>
-                            {/* Workspace Row */}
-                            <div
-                              className="flex items-center gap-1.5 pl-6 pr-2 py-2 cursor-default group transition-colors"
-                              style={{ backgroundColor: isActive ? 'var(--bg-active)' : undefined }}
-                              onMouseEnter={(e) => { if (!isActive) e.currentTarget.style.backgroundColor = 'var(--bg-hover)'; }}
-                              onMouseLeave={(e) => { if (!isActive) e.currentTarget.style.backgroundColor = 'transparent'; }}
-                              onContextMenu={(e) => openWorkspaceCtxMenu(e, ws)}
-                            >
-                              <span
-                                className="text-xs truncate flex-1"
-                                style={{ color: isActive ? 'var(--text-primary)' : 'var(--text-secondary)' }}
+                      {/* Workspaces */}
+                      {isExpanded && (
+                        <div>
+                          {repoWorkspaces.length === 0 ? (
+                            <div className="pl-8 pr-3 py-1.5 text-[11px] text-muted-foreground">
+                              No workspaces.{' '}
+                              <button
+                                onClick={() => handleAddWorkspace(repo.id)}
+                                className="text-[var(--accent)] hover:opacity-80 transition-opacity"
                               >
-                                {ws.name}
-                              </span>
-                              {wsRunningCount > 0 && (
-                                <span
-                                  className="text-[10px] leading-none px-1.5 py-0.5 rounded-full font-medium flex-shrink-0"
-                                  style={{ color: '#22c55e', backgroundColor: 'rgba(34,197,94,0.12)' }}
-                                >
-                                  ● {wsRunningCount}
-                                </span>
-                              )}
-                              <span
-                                className="text-[10px] font-mono opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
-                                style={{ color: 'var(--text-muted)' }}
-                              >
-                                {ws.branch}
-                              </span>
-                              <div className="opacity-0 group-hover:opacity-100 flex items-center gap-0.5 transition-opacity">
-                                {IDE_OPTIONS.map((ide) => (
-                                  <button
-                                    key={ide.id}
-                                    onClick={(e) => { e.stopPropagation(); handleOpenInIde(ws, ide.id); }}
-                                    className="text-[9px] leading-none px-1 py-0.5 rounded font-medium transition-colors"
-                                    style={{ color: 'var(--text-muted)' }}
-                                    onMouseEnter={(e) => { e.currentTarget.style.color = 'var(--text-primary)'; e.currentTarget.style.backgroundColor = 'var(--bg-hover)'; }}
-                                    onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-muted)'; e.currentTarget.style.backgroundColor = 'transparent'; }}
-                                    title={`Open in ${ide.label}`}
-                                  >
-                                    {ide.shortLabel}
-                                  </button>
-                                ))}
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    if (window.confirm(`"${ws.name}" 워크스페이스를 삭제하시겠습니까?\n워크트리 디렉토리도 함께 삭제됩니다.`)) {
-                                      deleteWorkspaceMutation.mutate({ id: ws.id });
-                                    }
-                                  }}
-                                  disabled={deleteWorkspaceMutation.isPending}
-                                  className="text-[9px] leading-none px-1 py-0.5 rounded font-medium transition-colors"
-                                  style={{ color: 'var(--text-muted)' }}
-                                  onMouseEnter={(e) => { e.currentTarget.style.color = '#f87171'; e.currentTarget.style.backgroundColor = 'rgba(239,68,68,0.1)'; }}
-                                  onMouseLeave={(e) => { e.currentTarget.style.color = 'var(--text-muted)'; e.currentTarget.style.backgroundColor = 'transparent'; }}
-                                  title="워크스페이스 삭제"
-                                >
-                                  ✕
-                                </button>
-                              </div>
+                                Create one
+                              </button>
                             </div>
-                          </div>
-                        );
-                      })
-                    )}
-                  </div>
-                )}
-              </div>
-            );
-          })
-        }
-          </SortableContext>
-          </DndContext>
-        )}
-      </div>}
+                          ) : (
+                            repoWorkspaces.map((ws) => {
+                              const isActive = derivedActiveWorkspaceId === ws.id;
+                              const wsRunningCount = sessions.filter(
+                                (s) => s.workspaceId === ws.id && s.status === 'running'
+                              ).length;
+
+                              return (
+                                <div key={ws.id}>
+                                  {/* Workspace Row */}
+                                  <div
+                                    className={`relative flex items-center gap-2 pl-7 pr-2 py-1.5 cursor-pointer group rounded-md mx-1 transition-colors ${
+                                      isActive
+                                        ? 'bg-secondary text-foreground'
+                                        : 'hover:bg-accent/40'
+                                    }`}
+                                    onClick={() => {
+                                      setActiveWorkspace(ws.id);
+                                      void navigate({ to: '/workspace/$workspaceId', params: { workspaceId: ws.id } });
+                                    }}
+                                    onContextMenu={(e) => openWorkspaceCtxMenu(e, ws)}
+                                  >
+                                    {/* 활성 indicator — 왼쪽 accent 바 */}
+                                    {isActive && (
+                                      <span className="absolute left-0 top-1 bottom-1 w-0.5 rounded-full bg-primary" />
+                                    )}
+                                    <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                                      {wsRunningCount > 0 && (
+                                        <span className="size-1.5 rounded-full bg-emerald-500 shrink-0 animate-pulse" />
+                                      )}
+                                      <span className={`text-[12px] truncate transition-colors ${
+                                        isActive
+                                          ? 'text-foreground font-medium'
+                                          : 'text-muted-foreground/70 group-hover:text-muted-foreground'
+                                      }`}>
+                                        {ws.name}
+                                      </span>
+                                    </div>
+                                    <span className="text-[10px] font-mono text-muted-foreground/60 truncate hidden group-hover:block shrink-0 max-w-[80px]">
+                                      {ws.branch}
+                                    </span>
+                                    {/* IDE 빠른 열기 버튼 (hover 시) */}
+                                    <div className="opacity-0 group-hover:opacity-100 flex items-center gap-0.5 transition-opacity shrink-0">
+                                      {IDE_OPTIONS.map((ide) => (
+                                        <button
+                                          key={ide.id}
+                                          onClick={(e) => { e.stopPropagation(); handleOpenInIde(ws, ide.id); }}
+                                          className="text-[9px] leading-none px-1 py-0.5 rounded font-medium text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+                                          title={`Open in ${ide.label}`}
+                                        >
+                                          {ide.shortLabel}
+                                        </button>
+                                      ))}
+                                      <button
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          if (window.confirm(`"${ws.name}" 워크스페이스를 삭제하시겠습니까?\n워크트리 디렉토리도 함께 삭제됩니다.`)) {
+                                            deleteWorkspaceMutation.mutate({ id: ws.id });
+                                          }
+                                        }}
+                                        disabled={deleteWorkspaceMutation.isPending}
+                                        className="text-[9px] leading-none px-1 py-0.5 rounded font-medium text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors disabled:opacity-40"
+                                        title="워크스페이스 삭제"
+                                      >
+                                        ✕
+                                      </button>
+                                    </div>
+                                  </div>
+                                </div>
+                              );
+                            })
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </SortableContext>
+            </DndContext>
+          )}
+        </div>
+      )}
 
       {/* Footer */}
-      <div className="border-t px-3 py-2 flex items-center" style={{ borderColor: 'var(--border)' }}>
+      <div className="border-t border-border px-3 py-2 flex items-center">
         <Tooltip content="앱 설정">
           <button
-            onClick={() => openSettings()}
-            className="text-xs flex items-center gap-1 transition-colors ml-auto"
-            style={{ color: 'var(--text-secondary)' }}
-            onMouseEnter={(e) => (e.currentTarget.style.color = 'var(--text-primary)')}
-            onMouseLeave={(e) => (e.currentTarget.style.color = 'var(--text-secondary)')}
+            onClick={() => void navigate({ to: '/settings/general' })}
+            className="flex items-center gap-1.5 text-[11px] text-muted-foreground hover:text-foreground transition-colors ml-auto"
             aria-label="앱 설정"
           >
-            ⚙ 설정
+            <Settings size={11} />
+            Settings
           </button>
         </Tooltip>
       </div>

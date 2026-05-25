@@ -2,7 +2,7 @@
  * CenterPanel — AI Agent Editor 중앙 레이아웃
  *
  * 상단: TaskCardEditor (태스크 편집기)
- * 하단: TerminalPanel (세션 탭 + xterm.js PTY)
+ * 하단: TerminalPanel (세션 탭 + xterm.js PTY) 또는 WorkspaceChat (AI 채팅)
  *
  * 두 영역 사이에 드래그 가능한 분할선을 제공한다.
  * TiledLayout 모드일 때는 기존 TiledLayout만 표시 (TaskCardEditor 없음).
@@ -13,9 +13,13 @@ import { ErrorBoundary } from 'react-error-boundary';
 import { ErrorFallback } from '../ErrorFallback';
 import { TerminalPanel } from '../terminal/TerminalPanel';
 import { TaskCardEditor } from '../task/TaskCardEditor';
+import { WorkspaceChat } from '../chat/WorkspaceChat';
 import { useLayoutStore } from '../../store/layoutStore';
 import { useTaskStore } from '../../store/taskStore';
+import { useWorkspaceStore } from '../../store/workspaceStore';
 import { trpc } from '../../lib/trpc';
+
+type BottomTab = 'terminal' | 'chat';
 
 // 무거운 TiledLayout은 lazy import 유지
 const TiledLayout = lazy(() => import('./TiledLayout').then((m) => ({ default: m.TiledLayout })));
@@ -43,6 +47,10 @@ export function CenterPanel({ initialEditorHeight }: CenterPanelProps) {
   const selectedTaskId = useTaskStore((s) => s.selectedTaskId);
   const tasks = useTaskStore((s) => s.tasks);
   const selectedTask = tasks.find((t) => t.id === selectedTaskId);
+  const activeWorkspaceId = useWorkspaceStore((s) => s.activeWorkspaceId);
+
+  // 하단 패널 탭 상태 (terminal | chat)
+  const [bottomTab, setBottomTab] = useState<BottomTab>('terminal');
 
   // 선택된 태스크의 workspaceId를 TerminalPanel에 넘겨 세션 필터링에 사용
   const taskWorkspaceId = selectedTask?.workspaceId ?? null;
@@ -106,12 +114,55 @@ export function CenterPanel({ initialEditorHeight }: CenterPanelProps) {
     );
   }
 
-  // 태스크 미선택 시 TaskCardEditor를 숨기고 TerminalPanel만 표시
+  // 하단 패널 렌더러 (탭에 따라 분기)
+  const bottomPanel =
+    bottomTab === 'chat' ? (
+      <ErrorBoundary FallbackComponent={(props) => <ErrorFallback {...props} panelName="AI 채팅" />}>
+        <WorkspaceChat workspaceId={activeWorkspaceId ?? ''} />
+      </ErrorBoundary>
+    ) : (
+      <ErrorBoundary FallbackComponent={(props) => <ErrorFallback {...props} panelName="터미널" />}>
+        <TerminalPanel
+          taskWorkspaceId={resolvedTaskWorkspaceId}
+          taskId={selectedTaskId ?? undefined}
+        />
+      </ErrorBoundary>
+    );
+
+  // 탭 전환 헤더 (터미널 | AI 채팅)
+  const tabBar = (
+    <div
+      className="flex-shrink-0 flex items-center gap-1 px-2"
+      style={{ borderBottom: '1px solid var(--border)', backgroundColor: 'var(--bg-secondary)' }}
+    >
+      {(['terminal', 'chat'] as BottomTab[]).map((tab) => {
+        const label = tab === 'terminal' ? '터미널' : 'AI 채팅';
+        const isActive = bottomTab === tab;
+        return (
+          <button
+            key={tab}
+            onClick={() => setBottomTab(tab)}
+            className="px-3 py-1.5 text-xs transition-colors"
+            style={{
+              color: isActive ? 'var(--text-primary)' : 'var(--text-muted)',
+              borderBottom: isActive ? '2px solid var(--accent)' : '2px solid transparent',
+              fontWeight: isActive ? 500 : 400,
+            }}
+          >
+            {label}
+          </button>
+        );
+      })}
+    </div>
+  );
+
+  // 태스크 미선택 시 TaskCardEditor를 숨기고 하단 패널만 표시
   if (!selectedTaskId) {
     return (
-      <ErrorBoundary FallbackComponent={(props) => <ErrorFallback {...props} panelName="터미널" />}>
-        <TerminalPanel />
-      </ErrorBoundary>
+      <div className="flex flex-col h-full min-h-0 overflow-hidden">
+        {tabBar}
+        <div className="flex-1 min-h-0 overflow-hidden">{bottomPanel}</div>
+      </div>
     );
   }
 
@@ -146,16 +197,10 @@ export function CenterPanel({ initialEditorHeight }: CenterPanelProps) {
         />
       </div>
 
-      {/* ── 하단: TerminalPanel ──────────────────────────────────────────────── */}
-      {/* taskWorkspaceId를 넘겨 해당 워크스페이스 세션만 표시하도록 한다. */}
-      {/* taskId도 함께 넘겨 세션 없을 때 [실행] 버튼에서 run mutation 호출에 사용한다. */}
-      <div className="flex-1 min-h-0 overflow-hidden">
-        <ErrorBoundary FallbackComponent={(props) => <ErrorFallback {...props} panelName="터미널" />}>
-          <TerminalPanel
-            taskWorkspaceId={resolvedTaskWorkspaceId}
-            taskId={selectedTaskId}
-          />
-        </ErrorBoundary>
+      {/* ── 하단: 탭 바 + 패널 ──────────────────────────────────────────────── */}
+      <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
+        {tabBar}
+        <div className="flex-1 min-h-0 overflow-hidden">{bottomPanel}</div>
       </div>
     </div>
   );

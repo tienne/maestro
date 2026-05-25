@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { X, GitBranch, ArrowRight } from 'lucide-react';
 import { useWorkspaceStore } from '../../store/workspaceStore';
 import { useRepositoryStore } from '../../store/repositoryStore';
 import { trpc } from '../../lib/trpc';
@@ -12,39 +13,15 @@ interface Props {
   onCreated?: (workspace: Workspace) => void;
 }
 
-const inputStyle = {
-  backgroundColor: 'var(--bg-secondary)',
-  color: 'var(--text-primary)',
-  borderColor: 'var(--border)',
-};
-
 // 생성 단계 정의
 type Step = 'idle' | 'worktree' | 'setup' | 'done';
 
-function StepIndicator({ step, label, current }: { step: Step; label: string; current: Step }) {
-  const steps: Step[] = ['worktree', 'setup', 'done'];
-  const currentIdx = steps.indexOf(current);
-  const stepIdx = steps.indexOf(step);
-  const isDone = currentIdx > stepIdx;
-  const isActive = current === step;
-  return (
-    <div className="flex items-center gap-2 text-xs">
-      <span
-        className="w-4 h-4 rounded-full flex items-center justify-center text-[9px] font-bold flex-shrink-0"
-        style={{
-          backgroundColor: isDone ? '#22c55e' : isActive ? 'var(--accent)' : 'var(--bg-hover)',
-          color: isDone || isActive ? '#fff' : 'var(--text-muted)',
-        }}
-      >
-        {isDone ? '✓' : stepIdx + 1}
-      </span>
-      <span style={{ color: isActive ? 'var(--text-primary)' : isDone ? '#22c55e' : 'var(--text-muted)' }}>
-        {label}
-        {isActive && <span className="ml-1 animate-pulse">...</span>}
-      </span>
-    </div>
-  );
-}
+const STEP_GAUGE: Record<Step, number> = {
+  idle: 0,
+  worktree: 33,
+  setup: 66,
+  done: 100,
+};
 
 export function CreateWorkspaceModal({ repositoryId, onClose, onCreated }: Props) {
   const { addWorkspace } = useWorkspaceStore();
@@ -52,6 +29,7 @@ export function CreateWorkspaceModal({ repositoryId, onClose, onCreated }: Props
   const repo = repositories.find((r) => r.id === repositoryId);
 
   const [name, setName] = useState('');
+  const [prompt, setPrompt] = useState('');
   const [error, setError] = useState('');
   const [step, setStep] = useState<Step>('idle');
   const [createdWorkspace, setCreatedWorkspace] = useState<Workspace | null>(null);
@@ -65,7 +43,6 @@ export function CreateWorkspaceModal({ repositoryId, onClose, onCreated }: Props
   const createMutation = trpc.workspace.create.useMutation({
     onMutate: () => {
       setStep('worktree');
-      // 250ms 후 setup 단계로 전환 (시각적 피드백)
       setTimeout(() => setStep('setup'), 250);
     },
     onSuccess: async (workspace) => {
@@ -73,7 +50,6 @@ export function CreateWorkspaceModal({ repositoryId, onClose, onCreated }: Props
       addWorkspace(ws);
       setCreatedWorkspace(ws);
 
-      // M5-01: 선택된 템플릿이 있으면 적용
       if (selectedTemplateId) {
         try {
           await applyTemplateMutation.mutateAsync({ templateId: selectedTemplateId, workspaceId: ws.id });
@@ -84,6 +60,11 @@ export function CreateWorkspaceModal({ repositoryId, onClose, onCreated }: Props
 
       setStep('done');
       toast.success('워크스페이스 생성 완료', ws.name);
+
+      if (onCreated) {
+        onCreated(ws);
+        onClose();
+      }
     },
     onError: (e) => {
       setStep('idle');
@@ -98,161 +79,157 @@ export function CreateWorkspaceModal({ repositoryId, onClose, onCreated }: Props
     createMutation.mutate({ name: name.trim(), repositoryId });
   };
 
-  const branchPreview = repo
-    ? repo.branchPrefix
-      ? `${repo.branchPrefix}/${name || '...'}`
-      : name || '...'
+  const branchName = repo?.branchPrefix
+    ? `${repo.branchPrefix}/${name || '...'}`
     : name || '...';
 
+  const gaugeWidth = STEP_GAUGE[step];
+
   return (
-    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50" onClick={onClose} role="dialog" aria-modal="true" aria-label="워크스페이스 생성">
+    <div
+      className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50"
+      onClick={onClose}
+      role="dialog"
+      aria-modal="true"
+      aria-label="워크스페이스 생성"
+    >
       <div
-        className="rounded-lg w-[400px] p-5 flex flex-col gap-4 border"
-        style={{ backgroundColor: 'var(--bg-panel)', borderColor: 'var(--border)' }}
+        className="w-[min(680px,calc(100vw-2rem))] bg-popover rounded-xl overflow-hidden flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between">
-          <h2 className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>New Workspace</h2>
-          <button
-            onClick={onClose}
-            className="text-lg leading-none"
-            style={{ color: 'var(--text-muted)' }}
-            onMouseEnter={(e) => (e.currentTarget.style.color = 'var(--text-primary)')}
-            onMouseLeave={(e) => (e.currentTarget.style.color = 'var(--text-muted)')}
-          >
-            ×
-          </button>
-        </div>
-
-        {repo && (
+        {/* 상단 진행 게이지 */}
+        <div className="relative h-[1px] w-full bg-border/40">
           <div
-            className="text-xs rounded px-3 py-2"
-            style={{ backgroundColor: 'var(--bg-secondary)', color: 'var(--text-muted)' }}
-          >
-            Repository: <span style={{ color: 'var(--text-secondary)' }}>{repo.name}</span>
-          </div>
-        )}
-
-        {/* M5-01: From Template */}
-        {templates.length > 0 && (
-          <div className="flex flex-col gap-1">
-            <label className="text-xs" style={{ color: 'var(--text-muted)' }}>From Template</label>
-            <div className="flex flex-wrap gap-1.5">
-              <button
-                onClick={() => setSelectedTemplateId(null)}
-                className="text-[10px] px-2 py-1 rounded transition-colors"
-                style={{
-                  backgroundColor: selectedTemplateId === null ? 'var(--accent)' : 'var(--bg-secondary)',
-                  color: selectedTemplateId === null ? '#fff' : 'var(--text-secondary)',
-                  border: '1px solid',
-                  borderColor: selectedTemplateId === null ? 'var(--accent)' : 'var(--border)',
-                }}
-              >
-                None
-              </button>
-              {templates.map((tpl) => (
-                <button
-                  key={tpl.id}
-                  onClick={() => setSelectedTemplateId(tpl.id)}
-                  className="text-[10px] px-2 py-1 rounded transition-colors"
-                  style={{
-                    backgroundColor: selectedTemplateId === tpl.id ? 'var(--accent)' : 'var(--bg-secondary)',
-                    color: selectedTemplateId === tpl.id ? '#fff' : 'var(--text-secondary)',
-                    border: '1px solid',
-                    borderColor: selectedTemplateId === tpl.id ? 'var(--accent)' : 'var(--border)',
-                  }}
-                >
-                  {tpl.name}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-
-        <div className="flex flex-col gap-1">
-          <label className="text-xs" style={{ color: 'var(--text-muted)' }}>Workspace Name</label>
-          <input
-            autoFocus
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && handleCreate()}
-            placeholder="my-feature"
-            className="text-xs rounded px-3 py-2 outline-none border focus:border-blue-600 placeholder-gray-600"
-            style={inputStyle}
+            className="absolute inset-y-0 left-0 bg-foreground/70 transition-[width] duration-500 ease-out"
+            style={{ width: `${gaugeWidth}%` }}
           />
         </div>
 
-        <div
-          className="text-[10px] font-mono px-3 py-2 rounded"
-          style={{ backgroundColor: 'var(--bg-secondary)', color: 'var(--text-muted)' }}
-        >
-          Branch: <span style={{ color: 'var(--text-secondary)' }}>{branchPreview}</span>
-          {repo?.baseBranch && (
-            <> · Base: <span style={{ color: 'var(--text-secondary)' }}>{repo.baseBranch}</span></>
-          )}
+        {/* 헤더 */}
+        <div className="flex items-center justify-between px-5 pt-5 pb-4 border-b border-border/60">
+          <div className="flex items-center gap-2">
+            <span className="text-[11px] font-medium text-muted-foreground">Project</span>
+            <span className="text-[13px] font-medium text-foreground">{repo?.name ?? repositoryId}</span>
+          </div>
+          <button
+            onClick={onClose}
+            className="text-muted-foreground hover:text-foreground transition-colors"
+            aria-label="닫기"
+          >
+            <X size={14} />
+          </button>
         </div>
 
-        {/* 생성 진행 상태 */}
-        {step !== 'idle' && (
-          <div
-            className="flex flex-col gap-2 px-3 py-3 rounded"
-            style={{ backgroundColor: 'var(--bg-secondary)' }}
-          >
-            <StepIndicator step="worktree" label="git worktree 생성" current={step} />
-            <StepIndicator step="setup" label="의존성 설치 (setup script)" current={step} />
-            <StepIndicator step="done" label="워크스페이스 준비 완료" current={step} />
+        {/* 템플릿 선택 (있을 때만) */}
+        {templates.length > 0 && (
+          <div className="px-5 pt-4 flex flex-wrap gap-1.5">
+            <button
+              onClick={() => setSelectedTemplateId(null)}
+              className={`text-[10px] px-2 py-1 rounded border transition-colors ${
+                selectedTemplateId === null
+                  ? 'bg-foreground text-background border-foreground'
+                  : 'bg-transparent text-muted-foreground border-border hover:border-foreground/40'
+              }`}
+            >
+              None
+            </button>
+            {templates.map((tpl) => (
+              <button
+                key={tpl.id}
+                onClick={() => setSelectedTemplateId(tpl.id)}
+                className={`text-[10px] px-2 py-1 rounded border transition-colors ${
+                  selectedTemplateId === tpl.id
+                    ? 'bg-foreground text-background border-foreground'
+                    : 'bg-transparent text-muted-foreground border-border hover:border-foreground/40'
+                }`}
+              >
+                {tpl.name}
+              </button>
+            ))}
           </div>
         )}
 
+        {/* 프롬프트 입력 */}
+        <div className="px-5 py-4">
+          <textarea
+            autoFocus
+            value={prompt}
+            onChange={(e) => setPrompt(e.target.value)}
+            placeholder="What should this workspace do?"
+            className="w-full bg-transparent text-[14px] text-foreground placeholder:text-muted-foreground/60 resize-none outline-none min-h-[96px] leading-relaxed"
+            rows={4}
+          />
+        </div>
+
+        {/* 브랜치명 영역 */}
+        <div className="flex items-center gap-4 px-5 py-3 border-t border-border/60">
+          <div className="flex items-center gap-2 min-w-0 flex-1">
+            <GitBranch size={12} className="text-muted-foreground shrink-0" />
+            <input
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleCreate()}
+              placeholder="branch-name"
+              className="bg-transparent text-[12px] font-mono text-foreground placeholder:text-muted-foreground/60 outline-none min-w-0 flex-1"
+            />
+          </div>
+          {repo?.baseBranch && (
+            <span className="text-[11px] text-muted-foreground font-mono shrink-0">
+              from {repo.baseBranch}
+            </span>
+          )}
+          {repo?.branchPrefix && name && (
+            <span className="text-[11px] text-muted-foreground font-mono shrink-0 hidden sm:block">
+              → {branchName}
+            </span>
+          )}
+        </div>
+
+        {/* 에러 메시지 */}
         {error && (
-          <div className="text-xs text-red-400 bg-red-900/30 px-3 py-2 rounded">{error}</div>
+          <div className="mx-5 mb-3 text-xs text-destructive bg-destructive/10 px-3 py-2 rounded-md">
+            {error}
+          </div>
         )}
 
-        {step === 'done' ? (
-          <div className="flex gap-2 justify-end">
-            <button
-              onClick={onClose}
-              className="px-3 py-1.5 text-xs transition-colors"
-              style={{ color: 'var(--text-secondary)' }}
-              onMouseEnter={(e) => (e.currentTarget.style.color = 'var(--text-primary)')}
-              onMouseLeave={(e) => (e.currentTarget.style.color = 'var(--text-secondary)')}
-            >
-              Close
-            </button>
-            {onCreated && createdWorkspace && (
+        {/* 푸터 */}
+        <div className="flex items-center justify-end gap-2 px-5 py-3.5 border-t border-border/60">
+          {step === 'done' && onCreated && createdWorkspace ? (
+            <>
+              <button
+                onClick={onClose}
+                className="px-3 py-1.5 text-[12px] text-muted-foreground hover:text-foreground transition-colors"
+              >
+                Close
+              </button>
               <button
                 onClick={() => {
                   onCreated(createdWorkspace);
                   onClose();
                 }}
-                className="px-4 py-1.5 text-xs text-white rounded transition-colors"
-                style={{ backgroundColor: 'var(--accent)' }}
+                className="flex items-center gap-1.5 px-4 py-1.5 text-[12px] font-medium bg-foreground text-background rounded-md hover:opacity-90 transition-opacity"
               >
-                Start Session Now
+                Start Session <ArrowRight size={12} />
               </button>
-            )}
-          </div>
-        ) : (
-          <div className="flex gap-2 justify-end">
-            <button
-              onClick={onClose}
-              className="px-3 py-1.5 text-xs transition-colors"
-              style={{ color: 'var(--text-secondary)' }}
-              onMouseEnter={(e) => (e.currentTarget.style.color = 'var(--text-primary)')}
-              onMouseLeave={(e) => (e.currentTarget.style.color = 'var(--text-secondary)')}
-            >
-              Cancel
-            </button>
-            <button
-              onClick={handleCreate}
-              disabled={step !== 'idle' || !name.trim()}
-              className="px-4 py-1.5 text-xs text-white rounded transition-colors disabled:opacity-50"
-              style={{ backgroundColor: 'var(--accent)' }}
-            >
-              {step !== 'idle' ? 'Creating...' : 'Create Workspace'}
-            </button>
-          </div>
-        )}
+            </>
+          ) : (
+            <>
+              <button
+                onClick={onClose}
+                className="px-3 py-1.5 text-[12px] text-muted-foreground hover:text-foreground transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleCreate}
+                disabled={step !== 'idle' || !name.trim()}
+                className="flex items-center gap-1.5 px-4 py-1.5 text-[12px] font-medium bg-foreground text-background rounded-md hover:opacity-90 transition-opacity disabled:opacity-40"
+              >
+                {step !== 'idle' ? 'Creating...' : <>Create <ArrowRight size={12} /></>}
+              </button>
+            </>
+          )}
+        </div>
       </div>
     </div>
   );

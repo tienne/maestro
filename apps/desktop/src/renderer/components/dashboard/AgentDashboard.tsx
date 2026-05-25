@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { Suspense, useEffect, useRef, useState, Component, type ReactNode } from 'react';
 import { useSessionStore } from '../../store/sessionStore';
 import { useSettingsStore } from '../../store/settingsStore';
 import { useAgentStore } from '../../store/agentStore';
@@ -182,71 +182,50 @@ export function AgentDashboard() {
   );
 }
 
-/** M3+M4+M7: 개별 세션 카드 — 인텔리전스 + 의존성 + 리소스 임계값 표시 */
-function SessionCard({
+// ── SessionIntelligenceContent — useSuspenseQuery 패턴 ───────────────────────
+
+function SessionIntelligenceContent({
+  sessionId,
   session,
-  agent,
+  config,
+  cpuExceeded,
+  memExceeded,
   metrics,
+  agent,
   history,
   dependents,
   dependsOn,
-  onClick,
+  relTime,
 }: {
-  session: { id: string; name: string; status: SessionStatus; createdAt: string; lastExitCode?: number | null };
-  agent?: { name: string };
+  sessionId: string;
+  session: { name: string; lastExitCode?: number | null };
+  config: { label: string; color: string; dot: string };
+  cpuExceeded: boolean;
+  memExceeded: boolean;
   metrics?: { cpu: number; memory: number };
+  agent?: { name: string };
   history?: ResourceHistoryPoint[];
   dependents?: string[];
   dependsOn?: string;
-  onClick: () => void;
+  relTime: string;
 }) {
-  const config = STATUS_CONFIG[session.status];
-  const createdAt = new Date(session.createdAt);
-  const relTime = formatRelTime(createdAt);
-
-  // M7-02: 리소스 임계값
-  const cpuAlertThreshold = useSettingsStore((s) => s.cpuAlertThreshold);
-  const memAlertThresholdMb = useSettingsStore((s) => s.memAlertThresholdMb);
   const memMb = metrics ? metrics.memory / 1024 / 1024 : 0;
-  const cpuExceeded = metrics ? metrics.cpu > cpuAlertThreshold : false;
-  const memExceeded = metrics ? memMb > memAlertThresholdMb : false;
-  const resourceAlert = cpuExceeded || memExceeded;
 
-  // M7-02: 임계값 초과 시 토스트 알림 (세션당 1회)
-  const alertedRef = useRef(false);
-  useEffect(() => {
-    if (resourceAlert && !alertedRef.current) {
-      alertedRef.current = true;
-      const parts: string[] = [];
-      if (cpuExceeded) parts.push(`CPU ${metrics!.cpu.toFixed(1)}%`);
-      if (memExceeded) parts.push(`MEM ${memMb.toFixed(0)}MB`);
-      toast.error(`Resource Alert: ${session.name}`, parts.join(', '));
-    }
-    if (!resourceAlert) alertedRef.current = false;
-  }, [resourceAlert, cpuExceeded, memExceeded, memMb, metrics, session.name]);
-
-  // M3: 인텔리전스 쿼리
-  const { data: intelligence } = trpc.session.getIntelligence.useQuery(
-    { sessionId: session.id },
+  // M3: 인텔리전스 쿼리 — useSuspenseQuery 패턴 (Suspense 경계 안에서 렌더링)
+  const [intelligence] = trpc.session.getIntelligence.useSuspenseQuery(
+    { sessionId },
     { refetchInterval: 5000 },
   );
 
-  const tasks = intelligence?.tasks ?? [];
+  const tasks = (intelligence as SessionIntelligence | null)?.tasks ?? [];
   const doneTasks = tasks.filter((t) => t.status === 'done').length;
   const totalTasks = tasks.length;
   const progressPct = totalTasks > 0 ? Math.round((doneTasks / totalTasks) * 100) : 0;
-  const costUsd = intelligence?.costs?.totalCostUsd ?? 0;
-  const lastError = intelligence?.lastError;
+  const costUsd = (intelligence as SessionIntelligence | null)?.costs?.totalCostUsd ?? 0;
+  const lastError = (intelligence as SessionIntelligence | null)?.lastError;
 
   return (
-    <button
-      onClick={onClick}
-      className="flex flex-col gap-1 p-2.5 rounded-lg text-left transition-colors hover:bg-[var(--bg-hover)]"
-      style={{
-        backgroundColor: 'var(--bg-primary)',
-        border: resourceAlert ? '2px solid #f14c4c' : '1px solid var(--border)',
-      }}
-    >
+    <>
       {/* 헤더: 세션명 + 상태 dot */}
       <div className="flex items-center gap-2 justify-between">
         <span className="text-xs font-medium truncate" style={{ color: 'var(--text-primary)' }}>
@@ -268,9 +247,9 @@ function SessionCard({
             <span
               className="text-[9px] px-1 rounded font-bold"
               style={{ backgroundColor: 'rgba(241,76,76,0.15)', color: '#f14c4c' }}
-              title={lastError.message}
+              title={(lastError as { message: string }).message}
             >
-              {lastError.type}
+              {(lastError as { type: string }).type}
             </span>
           )}
           <div className={`w-1.5 h-1.5 rounded-full ${config.dot}`} />
@@ -340,6 +319,122 @@ function SessionCard({
 
       {/* M7-02: 리소스 히스토리 미니 차트 */}
       {history && history.length > 1 && <MiniResourceChart history={history} />}
+    </>
+  );
+}
+
+// ── SessionCardErrorBoundary ──────────────────────────────────────────────────
+
+class SessionCardErrorBoundary extends Component<
+  { children: ReactNode; sessionName: string; config: { label: string; color: string; dot: string } },
+  { error: Error | null }
+> {
+  state = { error: null };
+  static getDerivedStateFromError(error: Error) { return { error }; }
+  render() {
+    if (this.state.error) {
+      return (
+        <div className="flex items-center gap-2 justify-between">
+          <span className="text-xs font-medium truncate" style={{ color: 'var(--text-primary)' }}>
+            {this.props.sessionName}
+          </span>
+          <div className="flex items-center gap-1.5 flex-shrink-0">
+            <div className={`w-1.5 h-1.5 rounded-full ${this.props.config.dot}`} />
+            <span className="text-[10px]" style={{ color: this.props.config.color }}>
+              {this.props.config.label}
+            </span>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
+/** M3+M4+M7: 개별 세션 카드 — 인텔리전스 + 의존성 + 리소스 임계값 표시 */
+function SessionCard({
+  session,
+  agent,
+  metrics,
+  history,
+  dependents,
+  dependsOn,
+  onClick,
+}: {
+  session: { id: string; name: string; status: SessionStatus; createdAt: string; lastExitCode?: number | null };
+  agent?: { name: string };
+  metrics?: { cpu: number; memory: number };
+  history?: ResourceHistoryPoint[];
+  dependents?: string[];
+  dependsOn?: string;
+  onClick: () => void;
+}) {
+  const config = STATUS_CONFIG[session.status];
+  const createdAt = new Date(session.createdAt);
+  const relTime = formatRelTime(createdAt);
+
+  // M7-02: 리소스 임계값
+  const cpuAlertThreshold = useSettingsStore((s) => s.cpuAlertThreshold);
+  const memAlertThresholdMb = useSettingsStore((s) => s.memAlertThresholdMb);
+  const memMb = metrics ? metrics.memory / 1024 / 1024 : 0;
+  const cpuExceeded = metrics ? metrics.cpu > cpuAlertThreshold : false;
+  const memExceeded = metrics ? memMb > memAlertThresholdMb : false;
+  const resourceAlert = cpuExceeded || memExceeded;
+
+  // M7-02: 임계값 초과 시 토스트 알림 (세션당 1회)
+  const alertedRef = useRef(false);
+  useEffect(() => {
+    if (resourceAlert && !alertedRef.current) {
+      alertedRef.current = true;
+      const parts: string[] = [];
+      if (cpuExceeded) parts.push(`CPU ${metrics!.cpu.toFixed(1)}%`);
+      if (memExceeded) parts.push(`MEM ${memMb.toFixed(0)}MB`);
+      toast.error(`Resource Alert: ${session.name}`, parts.join(', '));
+    }
+    if (!resourceAlert) alertedRef.current = false;
+  }, [resourceAlert, cpuExceeded, memExceeded, memMb, metrics, session.name]);
+
+  // 카드 헤더 skeleton — Suspense fallback으로 사용
+  const cardHeaderFallback = (
+    <div className="flex items-center gap-2 justify-between">
+      <span className="text-xs font-medium truncate" style={{ color: 'var(--text-primary)' }}>
+        {session.name}
+      </span>
+      <div className="flex items-center gap-1.5 flex-shrink-0">
+        <div className={`w-1.5 h-1.5 rounded-full ${config.dot}`} />
+        <span className="text-[10px]" style={{ color: config.color }}>
+          {config.label}
+        </span>
+      </div>
+    </div>
+  );
+
+  return (
+    <button
+      onClick={onClick}
+      className="flex flex-col gap-1 p-2.5 rounded-lg text-left transition-colors hover:bg-[var(--bg-hover)]"
+      style={{
+        backgroundColor: 'var(--bg-primary)',
+        border: resourceAlert ? '2px solid #f14c4c' : '1px solid var(--border)',
+      }}
+    >
+      <Suspense fallback={cardHeaderFallback}>
+        <SessionCardErrorBoundary sessionName={session.name} config={config}>
+          <SessionIntelligenceContent
+            sessionId={session.id}
+            session={session}
+            config={config}
+            cpuExceeded={cpuExceeded}
+            memExceeded={memExceeded}
+            metrics={metrics}
+            agent={agent}
+            history={history}
+            dependents={dependents}
+            dependsOn={dependsOn}
+            relTime={relTime}
+          />
+        </SessionCardErrorBoundary>
+      </Suspense>
     </button>
   );
 }

@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { Component, Suspense, useState, useCallback, useEffect, type ReactNode } from 'react';
 import { trpc } from '../../lib/trpc';
 import { useUiStore } from '../../store/uiStore';
 import type { Workspace } from '@maestro/shared-types';
@@ -163,10 +163,14 @@ interface FileTreeProps extends Props {
   onBlame?: (filePath: string) => void;
 }
 
-export function FileTree({ workspace, onBlame }: FileTreeProps) {
+// ── FileTreeContent — useSuspenseQuery 패턴으로 데이터 로드 ──────────────────
+// Suspense 경계 안에서 렌더링되므로 isLoading 분기 불필요.
+
+function FileTreeContent({ workspace, onBlame }: FileTreeProps) {
   // useUiStore는 handleFileClick에서 getState()로 직접 접근
 
-  const query = trpc.git.readDir.useQuery(
+  // useSuspenseQuery는 [data, queryResult] 튜플을 반환 — 로딩/에러 분기 불필요
+  const [rootEntries] = trpc.git.readDir.useSuspenseQuery(
     { dirPath: workspace.worktreePath },
     { staleTime: 10_000 },
   );
@@ -192,31 +196,17 @@ export function FileTree({ workspace, onBlame }: FileTreeProps) {
     s.created?.forEach((p) => { statusMap[p] = 'A'; });
   }
 
-  if (query.isLoading) {
-    return <div className="p-3 text-xs" style={{ color: 'var(--text-muted)' }}>Loading...</div>;
-  }
-
-  if (query.isError) {
-    return (
-      <div className="p-3 text-xs text-red-400 break-all">
-        <div className="font-semibold mb-1">Failed to read directory</div>
-        <div className="font-mono" style={{ color: 'var(--text-secondary)' }}>{workspace.worktreePath}</div>
-        <div className="mt-1 text-red-300">{query.error.message}</div>
-      </div>
-    );
-  }
-
-  const rootEntries = ((query.data as unknown) ?? []) as FsEntry[];
+  const entries = ((rootEntries as unknown as FsEntry[]) ?? []) as FsEntry[];
 
   return (
     <div className="overflow-y-auto h-full py-1">
       <div className="px-2 py-1 text-[10px] truncate" style={{ color: 'var(--text-muted)' }}>
         {workspace.worktreePath}
       </div>
-      {rootEntries.length === 0 ? (
+      {entries.length === 0 ? (
         <div className="px-3 py-2 text-xs" style={{ color: 'var(--text-muted)' }}>Empty directory</div>
       ) : (
-        rootEntries.map((entry) => (
+        entries.map((entry) => (
           <TreeNode
             key={entry.path}
             entry={entry}
@@ -230,4 +220,57 @@ export function FileTree({ workspace, onBlame }: FileTreeProps) {
       )}
     </div>
   );
+}
+
+// ── FileTreeErrorFallback ─────────────────────────────────────────────────────
+
+function FileTreeErrorFallback({ worktreePath, error }: { worktreePath: string; error: Error }) {
+  return (
+    <div className="p-3 text-xs text-red-400 break-all">
+      <div className="font-semibold mb-1">Failed to read directory</div>
+      <div className="font-mono" style={{ color: 'var(--text-secondary)' }}>{worktreePath}</div>
+      <div className="mt-1 text-red-300">{error.message}</div>
+    </div>
+  );
+}
+
+// ── FileTree (public export) — Suspense 경계 포함 ─────────────────────────────
+
+export function FileTree({ workspace, onBlame }: FileTreeProps) {
+  return (
+    <Suspense
+      fallback={
+        <div className="p-3 text-xs" style={{ color: 'var(--text-muted)' }}>Loading...</div>
+      }
+    >
+      <FileTreeErrorBoundary worktreePath={workspace.worktreePath}>
+        <FileTreeContent workspace={workspace} onBlame={onBlame} />
+      </FileTreeErrorBoundary>
+    </Suspense>
+  );
+}
+
+// ── FileTreeErrorBoundary ─────────────────────────────────────────────────────
+
+class FileTreeErrorBoundary extends Component<
+  { children: ReactNode; worktreePath: string },
+  { error: Error | null }
+> {
+  state = { error: null };
+
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+
+  render() {
+    if (this.state.error) {
+      return (
+        <FileTreeErrorFallback
+          worktreePath={this.props.worktreePath}
+          error={this.state.error}
+        />
+      );
+    }
+    return this.props.children;
+  }
 }

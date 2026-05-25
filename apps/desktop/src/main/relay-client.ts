@@ -5,9 +5,18 @@
  * Node.js 22+ 빌트인 WebSocket 사용.
  */
 
+import { BrowserWindow } from 'electron';
 import log from 'electron-log';
 
 export type RelayStatus = 'connected' | 'disconnected' | 'connecting';
+
+function broadcastRelayStatus(status: RelayStatus): void {
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (!win.isDestroyed()) {
+      win.webContents.send('relay-status', { status });
+    }
+  }
+}
 
 interface RelayMessage {
   type: 'session:list' | 'session:output' | 'session:input' | 'ping' | 'pong';
@@ -68,6 +77,7 @@ class RelayClient {
       log.info('[relay-client] connected');
       this._status = 'connected';
       this.retryCount = 0;
+      broadcastRelayStatus('connected');
     };
 
     this.ws.onmessage = (event) => {
@@ -92,6 +102,7 @@ class RelayClient {
         this._scheduleRetry();
       } else {
         this._status = 'disconnected';
+        broadcastRelayStatus('disconnected');
       }
     };
   }
@@ -102,12 +113,14 @@ class RelayClient {
     if (this.retryCount >= MAX_RETRIES) {
       log.warn(`[relay-client] max retries (${MAX_RETRIES}) reached — staying disconnected`);
       this._status = 'disconnected';
+      broadcastRelayStatus('disconnected');
       return;
     }
 
     const delayMs = Math.pow(2, this.retryCount) * 1000;
     this.retryCount++;
     this._status = 'connecting';
+    broadcastRelayStatus('connecting');
     log.info(`[relay-client] retry in ${delayMs}ms (attempt ${this.retryCount}/${MAX_RETRIES})`);
 
     this.retryTimer = setTimeout(() => {
