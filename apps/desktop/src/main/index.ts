@@ -95,8 +95,36 @@ app.whenReady().then(async () => {
     writeErrorLog(`renderer:${payload.source}`, errorStr);
   });
 
+  // AppState (UI 상태) lowdb 초기화 — tRPC/IPC 핸들러보다 먼저 준비되어야 한다
+  const { AppStateService } = await import('../services/app-state-service');
+  await AppStateService.getInstance().initialize(app.getPath('userData'));
+
   const { registerTrpcHandler } = await import('../trpc/ipc');
   registerTrpcHandler();
+
+  const { registerAnthropicAuthStatusHandlers } = await import('./host-service/auth-status');
+  registerAnthropicAuthStatusHandlers();
+
+  const { registerAnthropicOAuthHandlers } = await import('./host-service/oauth-handler');
+  registerAnthropicOAuthHandlers();
+
+  // host-service 시작 (AI 채팅 child process)
+  try {
+    const { hostServiceManager } = await import('./host-service/manager');
+    const { broadcastReauthRequired } = await import('./host-service/auth-status');
+    // stdout HOST_REAUTH_REQUIRED 신호 → renderer 브로드캐스트 콜백 주입
+    hostServiceManager.setReauthCallback(broadcastReauthRequired);
+    await hostServiceManager.start();
+    log.info('[host-service] Started on port', await hostServiceManager.getPort());
+  } catch (err) {
+    log.error('[host-service] Failed to start:', err);
+  }
+
+  // host-service 포트 IPC 노출 — renderer의 host-trpc.ts에서 사용
+  ipcMain.handle('host-service:getPort', async () => {
+    const { hostServiceManager } = await import('./host-service/manager');
+    return hostServiceManager.getPort();
+  });
 
   // M11-03: 릴레이 서버 연결 (RELAY_SERVER_URL 설정 시에만)
   if (process.env['RELAY_SERVER_URL']) {
@@ -196,6 +224,14 @@ app.on('before-quit', async () => {
     relayClient.destroy();
   } catch {
     // relay client가 초기화되지 않은 경우 무시
+  }
+
+  // host-service 종료
+  try {
+    const { hostServiceManager } = await import('./host-service/manager');
+    hostServiceManager.stop();
+  } catch {
+    // ignore
   }
 
   const { cleanupServices } = await import('../handlers/index');
