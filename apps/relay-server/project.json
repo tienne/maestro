@@ -1,0 +1,33 @@
+{
+  "name": "relay-server",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "projectType": "application",
+  "sourceRoot": "apps/relay-server/src",
+  "tags": ["type:server"],
+  "targets": {
+    "build": {
+      "command": "tsc",
+      "options": {
+        "cwd": "apps/relay-server"
+      }
+    },
+    "dev": {
+      "command": "tsx watch src/index.ts",
+      "options": {
+        "cwd": "apps/relay-server"
+      }
+    },
+    "start": {
+      "command": "node dist/index.js",
+      "options": {
+        "cwd": "apps/relay-server"
+      }
+    },
+    "typecheck": {
+      "command": "tsc --noEmit",
+      "options": {
+        "cwd": "apps/relay-server"
+      }
+    }
+  }
+}

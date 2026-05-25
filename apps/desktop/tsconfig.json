@@ -4,6 +4,7 @@
     "module": "ESNext",
     "moduleResolution": "bundler",
     "lib": ["ES2022", "DOM"],
+    "types": ["vite/client"],
     "outDir": "./out",
     "strict": true,
     "esModuleInterop": true,

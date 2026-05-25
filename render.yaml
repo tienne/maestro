@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: maestro-relay
+    runtime: node
+    plan: free
+    buildCommand: pnpm --filter @maestro/relay-server build
+    startCommand: node packages/relay-server/dist/index.js
+    envVars:
+      - key: PORT
+        value: 3001
+      - key: SUPABASE_JWT_SECRET
+        sync: false
+      - key: SUPABASE_URL
+        sync: false

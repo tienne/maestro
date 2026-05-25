@@ -1,0 +1,15 @@
+{
+  "name": "supabase",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "projectType": "library",
+  "sourceRoot": "packages/supabase/src",
+  "tags": ["type:lib"],
+  "targets": {
+    "typecheck": {
+      "command": "tsc --noEmit",
+      "options": {
+        "cwd": "packages/supabase"
+      }
+    }
+  }
+}

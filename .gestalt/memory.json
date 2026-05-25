@@ -1,0 +1,135 @@
+{
+  "version": "1.0.0",
+  "repoRoot": "/Users/kwon-david/dev/maestro",
+  "specHistory": [
+    {
+      "specId": "167c08b3-1df5-4aec-bba1-e269d9bda2c5",
+      "goal": "Maestro 데스크탑 AI 세션을 모바일(iOS/Android)에서 원격으로 모니터링하고 양방향 채팅할 수 있는 모바일 컴패니언 앱 구축. WebSocket 릴레이 서버(Railway/Render 무료), Supabase(Auth+Realtime), React Native/Expo로 구성된 무료 인프라 기반.",
+      "createdAt": "2026-04-12T09:25:22.604Z",
+      "interviewSessionId": "34fc42dc-4132-4988-9c96-cde1fdf4ab13",
+      "sourceType": "interview"
+    },
+    {
+      "specId": "455afeee-131c-4553-8962-6701f39a8fd4",
+      "goal": "Maestro 데스크탑 앱을 로그인 필수 앱으로 전환. Supabase Auth 기반 LoginScreen, authStore(Zustand), 설정>계정 섹션(로그아웃)을 구현하여 미인증 상태에서 앱 본체 접근을 차단한다.",
+      "createdAt": "2026-04-12T09:57:44.948Z",
+      "interviewSessionId": "d0d357c0-30df-4410-963a-a34af308aa3a",
+      "sourceType": "interview"
+    },
+    {
+      "specId": "ed0deac7-378e-4782-9ba5-89e67f6f65cd",
+      "goal": "데스크탑↔모바일 WebSocket 브릿지 릴레이 서버 구현. Supabase JWT 인증 기반 Room 관리로 NAT 뒤의 Maestro 데스크탑과 모바일 앱을 실시간 연결한다.",
+      "createdAt": "2026-04-12T10:17:23.734Z",
+      "sourceType": "text"
+    },
+    {
+      "specId": "51a38a16-52b4-431c-b7bc-460f4c22690f",
+      "goal": "Maestro 모바일·데스크탑이 공유하는 Supabase 백엔드 설정 파일 세트 생성. SQL 스키마(schema.sql), 공유 Supabase 클라이언트 패키지(packages/supabase/), 환경변수 가이드(.env.example)로 구성하여 데스크탑·모바일이 동일한 Supabase 프로젝트를 사용할 수 있도록 한다.",
+      "createdAt": "2026-04-12T10:27:04.890Z",
+      "sourceType": "text"
+    },
+    {
+      "specId": "ff2f0b1e-bd45-4e1f-a86c-3531b27d15ff",
+      "goal": "Electron 메인 프로세스에 WebSocket 릴레이 클라이언트(relay-client.ts)를 구현하고, tRPC relay 라우터를 통해 데스크탑 세션 목록/터미널 출력을 릴레이 서버로 브로드캐스트하여 모바일 앱이 원격으로 제어할 수 있도록 한다.",
+      "createdAt": "2026-04-12T10:35:32.058Z",
+      "interviewSessionId": "9e098b24-0231-488d-bc71-2bbefb61c37a",
+      "sourceType": "interview"
+    },
+    {
+      "specId": "f81f9e1f-d04d-41b0-ad3f-104cc04ebc8e",
+      "goal": "Expo 기반 React Native 모바일 앱으로 Supabase 인증 후 릴레이 서버를 통해 데스크탑 터미널 세션에 원격 접속하여 텍스트 채팅 인터페이스로 AI 에이전트와 상호작용한다. MVP는 LoginScreen → SessionListScreen → ChatScreen 3개 화면으로 구성되며, 모바일은 세션 viewer/input 역할만 수행한다.",
+      "createdAt": "2026-04-12T10:48:06.435Z",
+      "interviewSessionId": "1dacfc0f-c70f-42b3-a5dc-92806e204568",
+      "sourceType": "interview"
+    },
+    {
+      "specId": "cc570144-a902-4ecc-9037-d372ab5ac25b",
+      "goal": "데스크탑 앱에 Supabase 인증 기반 로그인 시스템을 구현하여, 미인증 상태에서 앱 본체 접근을 차단하고 계정 관리 UI를 제공한다.",
+      "createdAt": "2026-04-12T11:01:50.461Z",
+      "interviewSessionId": "e1e0fe66-5f22-4f69-b127-6b6763496b27",
+      "sourceType": "interview"
+    }
+  ],
+  "executionHistory": [
+    {
+      "executeSessionId": "b35d0f47-beba-405b-be62-37c77bd445ad",
+      "specId": "455afeee-131c-4553-8962-6701f39a8fd4",
+      "completedTasks": [
+        "task-0",
+        "task-2",
+        "task-1",
+        "task-3",
+        "task-4",
+        "task-6",
+        "task-5"
+      ],
+      "failedTasks": [],
+      "resultSummary": "Score: 0.95, goalAlignment: 0.95",
+      "completedAt": "2026-04-12T10:09:46.170Z"
+    },
+    {
+      "executeSessionId": "f9b32564-b9d2-482c-8470-58fb2ad85609",
+      "specId": "ed0deac7-378e-4782-9ba5-89e67f6f65cd",
+      "completedTasks": [
+        "task-0",
+        "task-1",
+        "task-2",
+        "task-3",
+        "task-4",
+        "task-5"
+      ],
+      "failedTasks": [],
+      "resultSummary": "Score: 0.97, goalAlignment: 0.00",
+      "completedAt": "2026-04-12T10:26:19.451Z"
+    },
+    {
+      "executeSessionId": "44691156-8249-450f-93dd-78ca60103492",
+      "specId": "51a38a16-52b4-431c-b7bc-460f4c22690f",
+      "completedTasks": [
+        "task-0",
+        "task-2",
+        "task-4",
+        "task-1",
+        "task-3",
+        "task-5"
+      ],
+      "failedTasks": [],
+      "resultSummary": "Score: 1.00, goalAlignment: 1.00",
+      "completedAt": "2026-04-12T10:33:32.822Z"
+    },
+    {
+      "executeSessionId": "4a32d045-0335-424b-8273-bab77b20f36d",
+      "specId": "ff2f0b1e-bd45-4e1f-a86c-3531b27d15ff",
+      "completedTasks": [
+        "task-0",
+        "task-1",
+        "task-2",
+        "task-3",
+        "task-4",
+        "task-5",
+        "task-6"
+      ],
+      "failedTasks": [],
+      "resultSummary": "Score: 0.93, goalAlignment: 0.95",
+      "completedAt": "2026-04-12T10:45:33.165Z"
+    },
+    {
+      "executeSessionId": "12eb9ba4-52ba-46cf-b3d1-d6e92ca6459c",
+      "specId": "f81f9e1f-d04d-41b0-ad3f-104cc04ebc8e",
+      "completedTasks": [
+        "task-0",
+        "task-1",
+        "task-2",
+        "task-3",
+        "task-4",
+        "task-5",
+        "task-6"
+      ],
+      "failedTasks": [],
+      "resultSummary": "Score: 0.90, goalAlignment: 0.92",
+      "completedAt": "2026-04-12T10:58:46.925Z"
+    }
+  ],
+  "architectureDecisions": [],
+  "lastUpdated": "2026-04-12T11:01:50.466Z"
+}
