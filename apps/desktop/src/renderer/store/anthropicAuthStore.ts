@@ -104,8 +104,8 @@ export const initializeAnthropicAuthAtom = atom(null, (_get, set) => {
   set(anthropicCleanupFnAtom, cleanup);
 });
 
-export const cleanupAnthropicAuthAtom = atom(null, (get, _set) => {
-  get(anthropicCleanupFnAtom)?.();
+export const cleanupAnthropicAuthAtom = atom(null, (_get, _set) => {
+  jotaiStore.get(anthropicCleanupFnAtom)?.();
 });
 
 // ---------------------------------------------------------------------------
