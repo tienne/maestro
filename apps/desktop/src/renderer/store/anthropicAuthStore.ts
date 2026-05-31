@@ -95,17 +95,21 @@ export const openAnthropicOAuthAtom = atom(null, async (_get, set) => {
 export const initializeAnthropicAuthAtom = atom(null, (_get, set) => {
   void jotaiStore.set(checkAnthropicStatusAtom);
 
-  const cleanup =
-    window.electronAPI?.onEvent('anthropic:reauth-required', () => {
-      set(anthropicStatusAtom, 'expired');
-      set(anthropicIsAuthenticatedAtom, false);
-    }) ?? (() => undefined);
+  // contextBridge는 함수를 반환하는 함수를 지원하지 않으므로
+  // onEvent() 반환값을 직접 저장하지 않고 offEvent를 사용하는 클로저로 대체한다
+  window.electronAPI?.onEvent('anthropic:reauth-required', () => {
+    set(anthropicStatusAtom, 'expired');
+    set(anthropicIsAuthenticatedAtom, false);
+  });
 
-  set(anthropicCleanupFnAtom, cleanup);
+  set(anthropicCleanupFnAtom, () => {
+    window.electronAPI?.offEvent('anthropic:reauth-required');
+  });
 });
 
 export const cleanupAnthropicAuthAtom = atom(null, (_get, _set) => {
-  jotaiStore.get(anthropicCleanupFnAtom)?.();
+  const fn = jotaiStore.get(anthropicCleanupFnAtom);
+  if (typeof fn === 'function') fn();
 });
 
 // ---------------------------------------------------------------------------

@@ -25,10 +25,55 @@ export class DatabaseManager {
   /**
    * drizzle-kit 마이그레이션을 실행한다.
    * `drizzle/` 폴더의 SQL 파일을 순서대로 적용하며, 이미 적용된 파일은 건너뛴다.
+   * 기존 DB에 테이블이 이미 존재하는 경우(__drizzle_migrations 누락) 충돌을 무시한다.
    */
   migrate(migrationsFolder: string): void {
-    drizzleMigrate(this.drizzle, { migrationsFolder });
-    log.info(`Drizzle migrations applied from ${migrationsFolder}`);
+    try {
+      drizzleMigrate(this.drizzle, { migrationsFolder });
+      log.info(`Drizzle migrations applied from ${migrationsFolder}`);
+    } catch (err: unknown) {
+      // Drizzle wraps SQLite "table already exists" as "Failed to run the query '...'"
+      // Check if core tables exist to confirm this is a pre-existing DB scenario
+      const tablesExist = this.db
+        .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='agents'`)
+        .get();
+      if (tablesExist) {
+        const msg = err instanceof Error ? err.message : String(err);
+        log.warn(`[DB] Migration conflict on pre-existing DB — registering as applied: ${msg.slice(0, 80)}`);
+        this.markMigrationsApplied(migrationsFolder);
+      } else {
+        throw err;
+      }
+    }
+  }
+
+  /** 마이그레이션 파일의 해시를 __drizzle_migrations에 등록해 재실행을 방지한다 */
+  private markMigrationsApplied(migrationsFolder: string): void {
+    const crypto = require('node:crypto') as typeof import('node:crypto');
+    const fs = require('node:fs') as typeof import('node:fs');
+    const journalPath = `${migrationsFolder}/meta/_journal.json`;
+    if (!fs.existsSync(journalPath)) return;
+    const journal = JSON.parse(fs.readFileSync(journalPath).toString()) as {
+      entries: Array<{ tag: string; when: number }>;
+    };
+    this.db.exec(`CREATE TABLE IF NOT EXISTS __drizzle_migrations (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      hash text NOT NULL,
+      created_at numeric
+    )`);
+    const insert = this.db.prepare(
+      `INSERT OR IGNORE INTO __drizzle_migrations (hash, created_at) VALUES (?, ?)`
+    );
+    for (const entry of journal.entries) {
+      const sqlPath = `${migrationsFolder}/${entry.tag}.sql`;
+      if (!fs.existsSync(sqlPath)) continue;
+      const hash = crypto.createHash('sha256').update(fs.readFileSync(sqlPath).toString()).digest('hex');
+      const existing = this.db.prepare(`SELECT 1 FROM __drizzle_migrations WHERE hash = ?`).get(hash);
+      if (!existing) {
+        insert.run(hash, entry.when);
+        log.info(`[DB] Registered migration as applied: ${entry.tag}`);
+      }
+    }
   }
 
   private initialize(): void {
