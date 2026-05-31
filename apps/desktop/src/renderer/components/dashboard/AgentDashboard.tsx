@@ -8,13 +8,15 @@ import { useResourceHistory, type ResourceHistoryPoint } from '../../hooks/useRe
 import { trpc } from '../../lib/trpc';
 import { toast } from '../../lib/toast';
 import type { SessionStatus, SessionIntelligence } from '@maestro/shared-types';
+import { StatusIndicator } from '../shared/StatusIndicator';
+import type { StatusType } from '../shared/StatusIndicator';
 
-const STATUS_CONFIG: Record<SessionStatus, { label: string; color: string; dot: string }> = {
-  running: { label: 'Running', color: '#73c991', dot: 'bg-green-400 animate-pulse' },
-  pending: { label: 'Waiting', color: '#e2a94e', dot: 'bg-yellow-400' },
-  stopped: { label: 'Stopped', color: 'var(--text-muted)', dot: 'bg-gray-400' },
-  error: { label: 'Error', color: '#f14c4c', dot: 'bg-red-400' },
-  blocked: { label: 'Blocked', color: '#f97316', dot: 'bg-orange-400' },
+const STATUS_CONFIG: Record<SessionStatus, { label: string; color: string; dot: string; statusType: StatusType }> = {
+  running: { label: 'Running', color: 'var(--mk-status-running)', dot: '', statusType: 'running' },
+  pending: { label: 'Waiting', color: 'var(--mk-status-warning)', dot: '', statusType: 'warning' },
+  stopped: { label: 'Stopped', color: 'var(--mk-status-idle)', dot: '', statusType: 'idle' },
+  error: { label: 'Error', color: 'var(--mk-status-danger)', dot: '', statusType: 'danger' },
+  blocked: { label: 'Blocked', color: 'var(--mk-status-warning)', dot: '', statusType: 'warning' },
 };
 
 /**
@@ -199,7 +201,7 @@ function SessionIntelligenceContent({
 }: {
   sessionId: string;
   session: { name: string; lastExitCode?: number | null };
-  config: { label: string; color: string; dot: string };
+  config: { label: string; color: string; dot: string; statusType: StatusType };
   cpuExceeded: boolean;
   memExceeded: boolean;
   metrics?: { cpu: number; memory: number };
@@ -252,7 +254,7 @@ function SessionIntelligenceContent({
               {(lastError as { type: string }).type}
             </span>
           )}
-          <div className={`w-1.5 h-1.5 rounded-full ${config.dot}`} />
+          <StatusIndicator status={config.statusType} size={6} />
           <span className="text-[10px]" style={{ color: config.color }}>
             {config.label}
           </span>
@@ -326,7 +328,7 @@ function SessionIntelligenceContent({
 // ── SessionCardErrorBoundary ──────────────────────────────────────────────────
 
 class SessionCardErrorBoundary extends Component<
-  { children: ReactNode; sessionName: string; config: { label: string; color: string; dot: string } },
+  { children: ReactNode; sessionName: string; config: { label: string; color: string; dot: string; statusType: StatusType } },
   { error: Error | null }
 > {
   state = { error: null };
@@ -339,7 +341,7 @@ class SessionCardErrorBoundary extends Component<
             {this.props.sessionName}
           </span>
           <div className="flex items-center gap-1.5 flex-shrink-0">
-            <div className={`w-1.5 h-1.5 rounded-full ${this.props.config.dot}`} />
+            <StatusIndicator status={this.props.config.statusType} size={6} />
             <span className="text-[10px]" style={{ color: this.props.config.color }}>
               {this.props.config.label}
             </span>
@@ -401,7 +403,7 @@ function SessionCard({
         {session.name}
       </span>
       <div className="flex items-center gap-1.5 flex-shrink-0">
-        <div className={`w-1.5 h-1.5 rounded-full ${config.dot}`} />
+        <StatusIndicator status={config.statusType} size={6} />
         <span className="text-[10px]" style={{ color: config.color }}>
           {config.label}
         </span>

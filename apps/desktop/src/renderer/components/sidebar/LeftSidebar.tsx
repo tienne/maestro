@@ -8,10 +8,9 @@ import { useUiStore } from '../../store/uiStore';
 import { trpc } from '../../lib/trpc';
 import { AddRepositoryModal } from '../modals/AddRepositoryModal';
 import { CreateWorkspaceModal } from '../modals/CreateWorkspaceModal';
-import { AgentDashboard } from '../dashboard/AgentDashboard';
-import { ProjectTree } from './ProjectTree';
 import { EmptyState } from '../shared/EmptyState';
 import { Tooltip } from '../shared/Tooltip';
+import { StatusIndicator } from '../shared/StatusIndicator';
 import { ContextMenu, type ContextMenuEntry } from './ContextMenu';
 import {
   DndContext,
@@ -29,8 +28,6 @@ import {
 } from '@dnd-kit/sortable';
 import type { Workspace, Repository, IdeType } from '@maestro/shared-types';
 
-type LeftTab = 'repos' | 'projects' | 'dashboard';
-
 const IDE_OPTIONS: { id: IdeType; label: string; shortLabel: string }[] = [
   { id: 'vscode', label: 'VS Code', shortLabel: 'VS' },
   { id: 'cursor', label: 'Cursor', shortLabel: 'Cu' },
@@ -45,7 +42,6 @@ export function LeftSidebar() {
   const { sessions, activeSessionId } = useSessionStore();
   const { openRepoSettings, openSettings } = useUiStore();
 
-  const [leftTab, setLeftTab] = useState<LeftTab>('repos');
   const [expandedRepoIds, setExpandedRepoIds] = useState<Set<string>>(new Set());
   const [showAddRepo, setShowAddRepo] = useState(false);
   const [showCreateWorkspace, setShowCreateWorkspace] = useState(false);
@@ -207,62 +203,24 @@ export function LeftSidebar() {
             Maestro
           </span>
           {totalRunningCount > 0 && (
-            <span className="text-[10px] leading-none px-1.5 py-0.5 rounded-full font-medium text-emerald-400 bg-emerald-500/10">
-              {totalRunningCount} running
-            </span>
+            <StatusIndicator status="running" size={6} showLabel={false} />
           )}
         </span>
-        {leftTab === 'repos' && (
-          <Tooltip content="레포지토리 추가">
-            <button
-              onClick={() => setShowAddRepo(true)}
-              className="size-5 flex items-center justify-center rounded text-muted-foreground hover:text-foreground hover:bg-accent transition-all"
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              style={{ ...({ WebkitAppRegion: 'no-drag' } as any) }}
-              aria-label="레포지토리 추가"
-            >
-              <Plus size={13} />
-            </button>
-          </Tooltip>
-        )}
-      </div>
-
-      {/* Tabs: Repos | Tasks | Agents */}
-      <div className="flex flex-shrink-0 border-b border-border" role="tablist" aria-label="사이드바 탭">
-        {([['repos', 'Repos'], ['projects', 'Tasks'], ['dashboard', 'Agents']] as [LeftTab, string][]).map(([tab, label]) => (
+        <Tooltip content="레포지토리 추가">
           <button
-            key={tab}
-            onClick={() => setLeftTab(tab)}
-            role="tab"
-            aria-selected={leftTab === tab}
-            className="flex-1 py-1.5 text-[11px] font-medium uppercase tracking-wide transition-colors"
-            style={{
-              color: leftTab === tab ? 'var(--text-primary)' : 'var(--text-muted)',
-              borderBottom: leftTab === tab ? '2px solid var(--accent)' : '2px solid transparent',
-            }}
+            onClick={() => setShowAddRepo(true)}
+            className="size-5 flex items-center justify-center rounded text-muted-foreground hover:text-foreground hover:bg-accent transition-all"
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            style={{ ...({ WebkitAppRegion: 'no-drag' } as any) }}
+            aria-label="레포지토리 추가"
           >
-            {label}
+            <Plus size={13} />
           </button>
-        ))}
+        </Tooltip>
       </div>
 
-      {/* Agent Dashboard tab */}
-      {leftTab === 'dashboard' && (
-        <div className="flex-1 overflow-hidden min-h-0">
-          <AgentDashboard />
-        </div>
-      )}
-
-      {/* Projects tab */}
-      {leftTab === 'projects' && (
-        <div className="flex-1 overflow-hidden min-h-0 flex flex-col">
-          <ProjectTree />
-        </div>
-      )}
-
-      {/* Repository Tree (repos tab only) */}
-      {leftTab === 'repos' && (
-        <div className="flex-1 overflow-y-auto py-1">
+      {/* Repository Tree */}
+      <div className="flex-1 overflow-y-auto py-1">
           {repositories.length === 0 ? (
             <EmptyState
               icon="📁"
@@ -346,7 +304,7 @@ export function LeftSidebar() {
                                     )}
                                     <div className="flex items-center gap-1.5 min-w-0 flex-1">
                                       {wsRunningCount > 0 && (
-                                        <span className="size-1.5 rounded-full bg-emerald-500 shrink-0 animate-pulse" />
+                                        <StatusIndicator status="running" size={6} />
                                       )}
                                       <span className={`text-[12px] truncate transition-colors ${
                                         isActive
@@ -399,7 +357,6 @@ export function LeftSidebar() {
             </DndContext>
           )}
         </div>
-      )}
 
       {/* Footer */}
       <div className="border-t border-border px-3 py-2 flex items-center">

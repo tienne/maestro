@@ -1,10 +1,81 @@
 @import "tailwindcss";
+@import "@fontsource-variable/inter";
+
+@font-face {
+  font-family: "Geist Mono";
+  src: url("../../../node_modules/geist/dist/fonts/geist-mono/GeistMono-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Geist Mono";
+  src: url("../../../node_modules/geist/dist/fonts/geist-mono/GeistMono-Medium.woff2") format("woff2");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
 
 /* M8-05: 내장 테마 */
 @import "./themes/catppuccin-mocha.css";
 @import "./themes/nord.css";
 @import "./themes/gruvbox-dark.css";
 @import "./themes/one-dark-pro.css";
+
+/* ── Maestro Design Tokens (@maestro/tokens) ──────────────────────────────── */
+:root {
+  /* Colors */
+  --mk-primary: #000000;
+  --mk-ink: #000000;
+  --mk-on-primary: #ffffff;
+  --mk-on-dark: #ffffff;
+  --mk-canvas-night: #000000;
+  --mk-canvas-night-elevated: #0a0a0a;
+  --mk-canvas-light: #ffffff;
+  --mk-canvas-cream: #fbfbf5;
+  --mk-surface-elevated-dark: #1e2c31;
+  --mk-shade-30: #d4d4d8;
+  --mk-shade-40: #a1a1aa;
+  --mk-shade-50: #71717a;
+  --mk-shade-60: #52525b;
+  --mk-shade-70: #3f3f46;
+  --mk-hairline-light: #e4e4e7;
+  --mk-hairline-dark: #1e2c31;
+  --mk-aloe-10: #c1fbd4;
+  --mk-pistachio-10: #d4f9e0;
+  /* Status */
+  --mk-status-running: #22c55e;
+  --mk-status-success: #16a34a;
+  --mk-status-warning: #f59e0b;
+  --mk-status-danger: #ef4444;
+  --mk-status-idle: #71717a;
+  --mk-status-completed: #52525b;
+  /* Link tones */
+  --mk-link-cool-1: #9dabad;
+  --mk-link-cool-2: #9797a2;
+  --mk-link-cool-3: #bdbdca;
+  --mk-link-mint: #99b3ad;
+  /* Spacing */
+  --mk-spacing-xxs: 2px;
+  --mk-spacing-xs: 4px;
+  --mk-spacing-sm: 8px;
+  --mk-spacing-md: 12px;
+  --mk-spacing-lg: 16px;
+  --mk-spacing-xl: 24px;
+  --mk-spacing-xxl: 32px;
+  --mk-spacing-huge: 64px;
+  /* Radius */
+  --mk-radius-xs: 4px;
+  --mk-radius-sm: 5px;
+  --mk-radius-md: 8px;
+  --mk-radius-lg: 12px;
+  --mk-radius-xl: 20px;
+  --mk-radius-pill: 9999px;
+  /* Font families */
+  --mk-font-ui: "Inter Variable", Inter, Helvetica, Arial, sans-serif;
+  --mk-font-display: "NeueHaasGrotesk Display", Helvetica, Arial, sans-serif;
+  --mk-font-code: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+}
 
 /* ── Font size levels ──────────────────────────────────────────────────────── */
 :root {
@@ -164,7 +235,7 @@ body {
   background: var(--background);
   color: var(--foreground);
   font-size: var(--font-size-base);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-family: var(--mk-font-ui);
 }
 
 /* ── react-mosaic-component overrides ─────────────────────────────────────── */

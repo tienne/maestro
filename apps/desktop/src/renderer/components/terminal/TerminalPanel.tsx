@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useSessionStore } from '../../store/sessionStore';
 import { useSettingsStore } from '../../store/settingsStore';
 import { useUiStore } from '../../store/uiStore';
@@ -6,7 +6,6 @@ import { useWorkspaceStore } from '../../store/workspaceStore';
 import { useMcpStore } from '../../store/mcpStore';
 import { TerminalTab } from './TerminalTab';
 import { XTerminal } from './XTerminal';
-import { PromptInput } from './PromptInput';
 import { CreateSessionModal } from '../modals/CreateSessionModal';
 import { CompletionCard } from '../shared/CompletionCard';
 import { EmptyState } from '../shared/EmptyState';
@@ -15,6 +14,7 @@ import { trpc } from '../../lib/trpc';
 import { sendToTerminal } from '../../hooks/useAppInit';
 import { toast } from '../../lib/toast';
 import { FileEditorPanel } from '../editor/FileEditorPanel';
+import { WorkspaceChat } from '../chat/WorkspaceChat';
 import type { Session, SessionLabel } from '@maestro/shared-types';
 import {
   DndContext,
@@ -51,9 +51,12 @@ export function TerminalPanel({ taskWorkspaceId, taskId }: TerminalPanelProps = 
   const { sessions, activeSessionId, setActiveSession, removeSession, updateSession, addSession } = useSessionStore();
   const { splitLayout, setSplitLayout, panes, setPaneSession, activePaneIndex, setActivePaneIndex, pinnedTabs, tabOrder, setTabOrder, openFileTabs, activeFileTabPath, setActiveFileTabPath, closeFileTab } = useUiStore();
   const { servers, setServers } = useMcpStore();
-  const { workspaces } = useWorkspaceStore();
+  const { workspaces, activeWorkspaceId } = useWorkspaceStore();
   const [showCreateSession, setShowCreateSession] = useState(false);
-  const [broadcastMode, setBroadcastMode] = useState(false);
+  const [chatTabActive, setChatTabActive] = useState(false);
+  const [addMenuPos, setAddMenuPos] = useState<{ x: number; y: number } | null>(null);
+  const addButtonRef = useRef<HTMLButtonElement>(null);
+  const addMenuRef = useRef<HTMLDivElement>(null);
   // M4-05: 라벨 필터
   const [labelFilter, setLabelFilter] = useState<string | null>(null);
 
@@ -137,7 +140,6 @@ export function TerminalPanel({ taskWorkspaceId, taskId }: TerminalPanelProps = 
     setTabOrder(newOrder);
   }, [sortedSessions, pinnedTabs, setTabOrder]);
 
-  const runningSessions = sessions.filter((s) => s.status === 'running');
 
   const checkServersMutation = trpc.mcp.checkServers.useMutation({
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -151,6 +153,20 @@ export function TerminalPanel({ taskWorkspaceId, taskId }: TerminalPanelProps = 
     return () => clearInterval(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  useEffect(() => {
+    if (!addMenuPos) return;
+    const handler = (e: MouseEvent) => {
+      if (
+        addMenuRef.current && !addMenuRef.current.contains(e.target as Node) &&
+        addButtonRef.current && !addButtonRef.current.contains(e.target as Node)
+      ) {
+        setAddMenuPos(null);
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [addMenuPos]);
 
   const handleSplitLayoutChange = (layout: typeof splitLayout) => {
     setSplitLayout(layout);
@@ -194,6 +210,7 @@ export function TerminalPanel({ taskWorkspaceId, taskId }: TerminalPanelProps = 
   const rightPaneSessionId = panes[1].sessionId !== panes[0].sessionId ? panes[1].sessionId : null;
 
   const handleTabClick = (sessionId: string) => {
+    setChatTabActive(false);
     setActiveFileTabPath(null);
     setActiveSession(sessionId);
     setPaneSession(activePaneIndex, sessionId);
@@ -235,8 +252,7 @@ export function TerminalPanel({ taskWorkspaceId, taskId }: TerminalPanelProps = 
         className="flex items-center border-b overflow-x-auto"
         style={{
           backgroundColor: 'var(--bg-panel)',
-          borderColor: broadcastMode ? '#f97316' : 'var(--border)',
-          borderWidth: broadcastMode ? '2px' : '1px',
+          borderColor: 'var(--border)',
           minHeight: '44px',
         }}
       >
@@ -291,78 +307,37 @@ export function TerminalPanel({ taskWorkspaceId, taskId }: TerminalPanelProps = 
                 );
               })}
 
-              {/* 탭바 내 세션 추가 버튼 */}
-              {/* 태스크 모드: projectTask.run 재호출 / 일반 모드: CreateSessionModal */}
-              {taskWorkspaceId && taskId ? (
-                <Tooltip content="새 세션 추가" shortcut="⌘N">
-                  <button
-                    onClick={() => runTaskMutation.mutate({ taskId })}
-                    disabled={runTaskMutation.isPending}
-                    className="flex items-center justify-center w-8 h-full flex-shrink-0 text-lg leading-none transition-colors disabled:opacity-40"
-                    style={{ color: 'var(--text-muted)' }}
-                    onMouseEnter={(e) => {
-                      if (!runTaskMutation.isPending) {
-                        e.currentTarget.style.color = 'var(--text-primary)';
-                        e.currentTarget.style.backgroundColor = 'var(--bg-hover)';
-                      }
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.color = 'var(--text-muted)';
-                      e.currentTarget.style.backgroundColor = 'transparent';
-                    }}
-                    aria-label="새 세션"
-                  >
-                    +
-                  </button>
-                </Tooltip>
-              ) : activeWorkspace ? (
-                <Tooltip content="새 세션" shortcut="⌘N">
-                  <button
-                    onClick={() => setShowCreateSession(true)}
-                    className="flex items-center justify-center w-8 h-full flex-shrink-0 text-lg leading-none transition-colors"
-                    style={{ color: 'var(--text-muted)' }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.color = 'var(--text-primary)';
-                      e.currentTarget.style.backgroundColor = 'var(--bg-hover)';
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.color = 'var(--text-muted)';
-                      e.currentTarget.style.backgroundColor = 'transparent';
-                    }}
-                    aria-label="새 세션"
-                  >
-                    +
-                  </button>
-                </Tooltip>
-              ) : null}
+              {/* + 탭 추가 버튼 */}
+              {activeWorkspace && (
+                <button
+                  ref={addButtonRef}
+                  onClick={() => {
+                    if (addMenuPos) {
+                      setAddMenuPos(null);
+                    } else {
+                      const rect = addButtonRef.current?.getBoundingClientRect();
+                      if (rect) setAddMenuPos({ x: rect.left, y: rect.bottom + 4 });
+                    }
+                  }}
+                  className="flex items-center justify-center w-8 h-full flex-shrink-0 text-lg leading-none transition-colors"
+                  style={{ color: 'var(--text-muted)', minHeight: '44px' }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.color = 'var(--text-primary)';
+                    e.currentTarget.style.backgroundColor = 'var(--bg-hover)';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.color = 'var(--text-muted)';
+                    e.currentTarget.style.backgroundColor = 'transparent';
+                  }}
+                  aria-label="탭 추가"
+                >
+                  +
+                </button>
+              )}
             </div>
           </SortableContext>
         </DndContext>
 
-        {/* F-M2-02: 브로드캐스트 토글 */}
-        {runningSessions.length > 1 && (
-          <div className="flex items-center gap-1 px-2 flex-shrink-0">
-            <Tooltip content={broadcastMode ? '브로드캐스트 OFF' : '브로드캐스트 ON'} shortcut="⌘⇧Enter">
-            <button
-              onClick={() => setBroadcastMode(!broadcastMode)}
-              className="flex items-center gap-1 px-2 py-1 text-[10px] rounded transition-colors"
-              style={{
-                backgroundColor: broadcastMode ? 'rgba(249,115,22,0.2)' : 'var(--bg-hover)',
-                color: broadcastMode ? '#f97316' : 'var(--text-muted)',
-                border: `1px solid ${broadcastMode ? '#f97316' : 'var(--border)'}`,
-              }}
-              aria-label={broadcastMode ? '브로드캐스트 OFF' : '브로드캐스트 ON'}
-            >
-              {broadcastMode && (
-                <span className="font-bold text-[9px] px-1 py-0.5 rounded" style={{ backgroundColor: 'rgba(249,115,22,0.3)' }}>
-                  BROADCAST
-                </span>
-              )}
-              <span>Broadcast</span>
-            </button>
-            </Tooltip>
-          </div>
-        )}
 
         {/* MCP 연결 상태 칩 */}
         {servers.length > 0 && (() => {
@@ -409,8 +384,11 @@ export function TerminalPanel({ taskWorkspaceId, taskId }: TerminalPanelProps = 
 
       {/* Terminal Area + Prompt */}
       <div className="flex-1 overflow-hidden flex flex-col min-h-0">
-        {/* 파일 에디터 모드 */}
-        {activeFileTabPath ? (
+        {/* 채팅 모드 */}
+        {chatTabActive ? (
+          <WorkspaceChat workspaceId={activeWorkspaceId ?? ''} />
+        ) : /* 파일 에디터 모드 */
+        activeFileTabPath ? (
           <FileEditorPanel filePath={activeFileTabPath} />
         ) : splitLayout === 'single' ? (
           // Keep all session terminals mounted — only show the active one.
@@ -547,13 +525,46 @@ export function TerminalPanel({ taskWorkspaceId, taskId }: TerminalPanelProps = 
           </div>
         )}
         {/* M3-05: 완료 카드 — 파일 에디터 모드에서는 숨김 */}
-        {!activeFileTabPath && activeSessionId && (
+        {!chatTabActive && !activeFileTabPath && activeSessionId && (
           <CompletionCard sessionId={activeSessionId} />
         )}
-        {!activeFileTabPath && (
-          <PromptInput sessionId={activeSessionId} broadcastModeExternal={broadcastMode} />
-        )}
       </div>
+
+      {/* 플로팅 탭 추가 메뉴 */}
+      {addMenuPos && (
+        <div
+          ref={addMenuRef}
+          className="py-1 rounded-lg shadow-xl"
+          style={{
+            position: 'fixed',
+            top: addMenuPos.y,
+            left: addMenuPos.x,
+            zIndex: 9999,
+            minWidth: 120,
+            backgroundColor: 'var(--bg-elevated)',
+            border: '1px solid var(--border)',
+          }}
+        >
+          <button
+            className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-left transition-colors"
+            style={{ color: 'var(--text-primary)' }}
+            onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'var(--bg-hover)')}
+            onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
+            onClick={() => { setAddMenuPos(null); setShowCreateSession(true); }}
+          >
+            <span style={{ fontSize: 13 }}>⌨️</span> 터미널
+          </button>
+          <button
+            className="w-full flex items-center gap-2.5 px-3 py-2 text-xs text-left transition-colors"
+            style={{ color: 'var(--text-primary)' }}
+            onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'var(--bg-hover)')}
+            onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'transparent')}
+            onClick={() => { setAddMenuPos(null); setChatTabActive(true); setActiveFileTabPath(null); }}
+          >
+            <span style={{ fontSize: 13 }}>💬</span> 채팅
+          </button>
+        </div>
+      )}
 
       {showCreateSession && activeWorkspace && (
         <CreateSessionModal
