@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   KeyboardAvoidingView,
   Platform,
   StyleSheet,
@@ -13,12 +12,14 @@ import {
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { supabase } from '../lib/supabase';
 import type { RootStackParamList } from '../types/navigation';
+import { useTokens } from '../hooks/useTokens';
 
 type Props = {
   navigation: NativeStackNavigationProp<RootStackParamList, 'Login'>;
 };
 
 export function LoginScreen({ navigation }: Props) {
+  const { colors, spacing, radius } = useTokens();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
@@ -29,17 +30,13 @@ export function LoginScreen({ navigation }: Props) {
       setError('이메일과 비밀번호를 입력해주세요.');
       return;
     }
-
     setLoading(true);
     setError(null);
-
     const { error: authError } = await supabase.auth.signInWithPassword({
       email: email.trim(),
       password,
     });
-
     setLoading(false);
-
     if (authError) {
       setError(authError.message);
     } else {
@@ -47,19 +44,79 @@ export function LoginScreen({ navigation }: Props) {
     }
   };
 
+  const s = StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: colors.background,
+    },
+    inner: {
+      flex: 1,
+      justifyContent: 'center',
+      paddingHorizontal: spacing.xxl,
+    },
+    wordmark: {
+      fontSize: 32,
+      fontWeight: '300',
+      color: colors.textPrimary,
+      textAlign: 'center',
+      marginBottom: spacing.xs,
+      letterSpacing: 1.5,
+    },
+    subtitle: {
+      fontSize: 13,
+      fontWeight: '500',
+      color: colors.textMuted,
+      textAlign: 'center',
+      marginBottom: spacing.huge,
+      letterSpacing: 0.5,
+    },
+    input: {
+      backgroundColor: colors.surface,
+      borderWidth: 1,
+      borderColor: colors.border,
+      borderRadius: radius.md,
+      paddingHorizontal: spacing.md,
+      paddingVertical: spacing.sm + 2,
+      color: colors.textPrimary,
+      fontSize: 16,
+      marginBottom: spacing.md,
+    },
+    error: {
+      color: colors['status-danger'],
+      fontSize: 13,
+      marginBottom: spacing.md,
+      textAlign: 'center',
+    },
+    button: {
+      backgroundColor: colors.accent,
+      borderRadius: radius.pill,
+      paddingVertical: spacing.md,
+      alignItems: 'center',
+      marginTop: spacing.sm,
+    },
+    buttonDisabled: {
+      opacity: 0.5,
+    },
+    buttonText: {
+      color: colors['on-primary'],
+      fontSize: 16,
+      fontWeight: '600',
+    },
+  });
+
   return (
     <KeyboardAvoidingView
-      style={styles.container}
+      style={s.container}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
-      <View style={styles.inner}>
-        <Text style={styles.title}>Maestro</Text>
-        <Text style={styles.subtitle}>AI Agent Remote Control</Text>
+      <View style={s.inner}>
+        <Text style={s.wordmark}>Maestro</Text>
+        <Text style={s.subtitle}>AI Agent Remote Control</Text>
 
         <TextInput
-          style={styles.input}
+          style={s.input}
           placeholder="이메일"
-          placeholderTextColor="#666"
+          placeholderTextColor={colors.textMuted}
           value={email}
           onChangeText={setEmail}
           autoCapitalize="none"
@@ -68,9 +125,9 @@ export function LoginScreen({ navigation }: Props) {
         />
 
         <TextInput
-          style={styles.input}
+          style={s.input}
           placeholder="비밀번호"
-          placeholderTextColor="#666"
+          placeholderTextColor={colors.textMuted}
           value={password}
           onChangeText={setPassword}
           secureTextEntry
@@ -78,77 +135,21 @@ export function LoginScreen({ navigation }: Props) {
           onSubmitEditing={handleLogin}
         />
 
-        {error ? <Text style={styles.error}>{error}</Text> : null}
+        {error ? <Text style={s.error}>{error}</Text> : null}
 
         <TouchableOpacity
-          style={[styles.button, loading && styles.buttonDisabled]}
+          style={[s.button, loading && s.buttonDisabled]}
           onPress={handleLogin}
           disabled={loading}
+          activeOpacity={0.8}
         >
           {loading ? (
-            <ActivityIndicator color="#fff" />
+            <ActivityIndicator color={colors['on-primary']} />
           ) : (
-            <Text style={styles.buttonText}>로그인</Text>
+            <Text style={s.buttonText}>로그인</Text>
           )}
         </TouchableOpacity>
       </View>
     </KeyboardAvoidingView>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#0d0d1a',
-  },
-  inner: {
-    flex: 1,
-    justifyContent: 'center',
-    paddingHorizontal: 32,
-  },
-  title: {
-    fontSize: 36,
-    fontWeight: '700',
-    color: '#e0e0ff',
-    textAlign: 'center',
-    marginBottom: 8,
-  },
-  subtitle: {
-    fontSize: 14,
-    color: '#6666aa',
-    textAlign: 'center',
-    marginBottom: 48,
-  },
-  input: {
-    backgroundColor: '#1a1a2e',
-    borderWidth: 1,
-    borderColor: '#2a2a4e',
-    borderRadius: 8,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    color: '#e0e0ff',
-    fontSize: 16,
-    marginBottom: 12,
-  },
-  error: {
-    color: '#ff6b6b',
-    fontSize: 13,
-    marginBottom: 12,
-    textAlign: 'center',
-  },
-  button: {
-    backgroundColor: '#5b4fff',
-    borderRadius: 8,
-    paddingVertical: 14,
-    alignItems: 'center',
-    marginTop: 8,
-  },
-  buttonDisabled: {
-    opacity: 0.6,
-  },
-  buttonText: {
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '600',
-  },
-});
