@@ -98,6 +98,7 @@ export class DatabaseManager {
     this.migrateM9Sharing();
     this.migrateM10Plugins();
     this.migrateM11AgentEditor();
+    this.migrateM12ChatHistory();
   }
 
   /** M2-06: sessions 테이블에 is_favorite 컬럼 추가 (기존 DB 마이그레이션) */
@@ -416,6 +417,31 @@ export class DatabaseManager {
     if (!wsCols.some((c) => c.name === 'task_id')) {
       this.db.exec(`ALTER TABLE workspaces ADD COLUMN task_id TEXT REFERENCES tasks(id) ON DELETE SET NULL`);
     }
+  }
+
+  /** M12: 채팅 히스토리 — chat_sessions, chat_messages 테이블 생성 */
+  private migrateM12ChatHistory(): void {
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS chat_sessions (
+        id           TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        provider     TEXT NOT NULL,
+        model        TEXT NOT NULL,
+        created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE TABLE IF NOT EXISTS chat_messages (
+        id         TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+        role       TEXT NOT NULL,
+        content    TEXT NOT NULL,
+        provider   TEXT NOT NULL,
+        model      TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_chat_sessions_workspace ON chat_sessions(workspace_id);
+      CREATE INDEX IF NOT EXISTS idx_chat_messages_session ON chat_messages(session_id, created_at);
+    `);
   }
 
   // ── tiled_layouts ──────────────────────────────────────────────────────────

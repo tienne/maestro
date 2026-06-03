@@ -419,3 +419,44 @@ export const plugins = sqliteTable('plugins', {
 
 export type Plugin    = InferSelectModel<typeof plugins>;
 export type NewPlugin = InferInsertModel<typeof plugins>;
+
+// ── chat_sessions (M12) ───────────────────────────────────────────────────────
+
+export const chatSessions = sqliteTable(
+  'chat_sessions',
+  {
+    id:          text('id').primaryKey(),
+    workspaceId: text('workspace_id').notNull(),
+    provider:    text('provider').notNull(), // 'anthropic' | 'openai' | 'google'
+    model:       text('model').notNull(),
+    createdAt:   text('created_at').notNull().default(sql`(datetime('now'))`),
+    updatedAt:   text('updated_at').notNull().default(sql`(datetime('now'))`),
+  },
+  (t) => [
+    index('idx_chat_sessions_workspace').on(t.workspaceId),
+  ],
+);
+
+export type ChatSession    = InferSelectModel<typeof chatSessions>;
+export type NewChatSession = InferInsertModel<typeof chatSessions>;
+
+// ── chat_messages (M12) ───────────────────────────────────────────────────────
+
+export const chatMessages = sqliteTable(
+  'chat_messages',
+  {
+    id:        text('id').primaryKey(),
+    sessionId: text('session_id').notNull().references(() => chatSessions.id, { onDelete: 'cascade' }),
+    role:      text('role').notNull(), // 'user' | 'assistant'
+    content:   text('content').notNull(),
+    provider:  text('provider').notNull(),
+    model:     text('model').notNull(),
+    createdAt: text('created_at').notNull().default(sql`(datetime('now'))`),
+  },
+  (t) => [
+    index('idx_chat_messages_session').on(t.sessionId, t.createdAt),
+  ],
+);
+
+export type ChatMessage    = InferSelectModel<typeof chatMessages>;
+export type NewChatMessage = InferInsertModel<typeof chatMessages>;

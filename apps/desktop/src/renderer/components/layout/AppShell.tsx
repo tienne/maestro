@@ -160,7 +160,9 @@ export function AppShell() {
         ) : (
           <>
             <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
-              <CenterPanel />
+              <ErrorBoundary FallbackComponent={(props) => <ErrorFallback {...props} panelName="메인 패널" />}>
+                <CenterPanel />
+              </ErrorBoundary>
             </div>
             {/* Right Resize Handle */}
             <div

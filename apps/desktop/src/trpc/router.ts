@@ -4224,6 +4224,153 @@ const claudeRouter = router({
     }),
 });
 
+// ── chatRouter (M12) — 멀티 프로바이더 AI 채팅 ──────────────────────────────────
+
+export const chatRouter = router({
+  // 워크스페이스의 채팅 세션 조회 또는 생성
+  getOrCreateSession: publicProcedure
+    .input(z.object({
+      workspaceId: z.string(),
+      provider: z.enum(['anthropic', 'openai', 'google']),
+      model: z.string(),
+    }))
+    .mutation(({ input }) => {
+      const db = getDatabaseManager().getDb();
+      const existing = db.prepare(
+        `SELECT * FROM chat_sessions WHERE workspace_id = ? AND provider = ? AND model = ? ORDER BY updated_at DESC LIMIT 1`,
+      ).get(input.workspaceId, input.provider, input.model) as {
+        id: string; workspace_id: string; provider: string; model: string; created_at: string; updated_at: string
+      } | undefined;
+      if (existing) {
+        return {
+          id: existing.id,
+          workspaceId: existing.workspace_id,
+          provider: existing.provider as import('@maestro/shared-types').ChatProvider,
+          model: existing.model,
+          createdAt: existing.created_at,
+          updatedAt: existing.updated_at,
+        };
+      }
+      const id = uuidv4();
+      const now = new Date().toISOString();
+      db.prepare(
+        `INSERT INTO chat_sessions (id, workspace_id, provider, model, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)`,
+      ).run(id, input.workspaceId, input.provider, input.model, now, now);
+      return {
+        id,
+        workspaceId: input.workspaceId,
+        provider: input.provider as import('@maestro/shared-types').ChatProvider,
+        model: input.model,
+        createdAt: now,
+        updatedAt: now,
+      };
+    }),
+
+  listMessages: publicProcedure
+    .input(z.object({ sessionId: z.string(), limit: z.number().default(50) }))
+    .query(({ input }) => {
+      const db = getDatabaseManager().getDb();
+      const rows = db.prepare(
+        `SELECT * FROM chat_messages WHERE session_id = ? ORDER BY created_at ASC LIMIT ?`,
+      ).all(input.sessionId, input.limit) as Array<{
+        id: string; session_id: string; role: string; content: string; provider: string; model: string; created_at: string
+      }>;
+      return rows.map((r) => ({
+        id: r.id,
+        sessionId: r.session_id,
+        role: r.role as 'user' | 'assistant',
+        content: r.content,
+        provider: r.provider as import('@maestro/shared-types').ChatProvider,
+        model: r.model,
+        createdAt: r.created_at,
+      }));
+    }),
+
+  clearSession: publicProcedure
+    .input(z.object({ sessionId: z.string() }))
+    .mutation(({ input }) => {
+      const db = getDatabaseManager().getDb();
+      db.prepare(`DELETE FROM chat_messages WHERE session_id = ?`).run(input.sessionId);
+      return { success: true };
+    }),
+
+  stream: publicProcedure
+    .input(z.object({
+      sessionId: z.string(),
+      provider: z.enum(['anthropic', 'openai', 'google']),
+      model: z.string(),
+      messages: z.array(z.object({ role: z.enum(['user', 'assistant']), content: z.string() })),
+      accessToken: z.string(),
+    }))
+    .subscription(({ input }) => {
+      return observable<
+        | { type: 'delta'; text: string }
+        | { type: 'done'; fullText: string }
+        | { type: 'error'; message: string }
+      >((emit) => {
+        const db = getDatabaseManager().getDb();
+
+        // 마지막 user 메시지 DB 저장
+        const lastMsg = input.messages[input.messages.length - 1];
+        if (lastMsg?.role === 'user') {
+          db.prepare(
+            `INSERT INTO chat_messages (id, session_id, role, content, provider, model, created_at) VALUES (?, ?, ?, ?, ?, ?, datetime('now'))`,
+          ).run(uuidv4(), input.sessionId, 'user', lastMsg.content, input.provider, input.model);
+        }
+
+        let aborted = false;
+        let fullText = '';
+
+        const run = async (): Promise<void> => {
+          try {
+            const { streamText } = await import('ai');
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            let providerInstance: any;
+
+            if (input.provider === 'anthropic') {
+              const { createAnthropic } = await import('@ai-sdk/anthropic');
+              providerInstance = createAnthropic({ apiKey: input.accessToken });
+            } else if (input.provider === 'openai') {
+              const { createOpenAI } = await import('@ai-sdk/openai');
+              providerInstance = createOpenAI({ apiKey: input.accessToken });
+            } else {
+              const { createGoogleGenerativeAI } = await import('@ai-sdk/google');
+              providerInstance = createGoogleGenerativeAI({ apiKey: input.accessToken });
+            }
+
+            const result = streamText({
+              model: providerInstance(input.model),
+              messages: input.messages,
+            });
+
+            for await (const delta of result.textStream) {
+              if (aborted) break;
+              fullText += delta;
+              emit.next({ type: 'delta', text: delta });
+            }
+
+            if (!aborted) {
+              // assistant 응답 DB 저장
+              db.prepare(
+                `INSERT INTO chat_messages (id, session_id, role, content, provider, model, created_at) VALUES (?, ?, ?, ?, ?, ?, datetime('now'))`,
+              ).run(uuidv4(), input.sessionId, 'assistant', fullText, input.provider, input.model);
+              // session updated_at 갱신
+              db.prepare(`UPDATE chat_sessions SET updated_at = datetime('now') WHERE id = ?`).run(input.sessionId);
+              emit.next({ type: 'done', fullText });
+              emit.complete();
+            }
+          } catch (err) {
+            emit.next({ type: 'error', message: err instanceof Error ? err.message : String(err) });
+            emit.complete();
+          }
+        };
+
+        void run();
+        return () => { aborted = true; };
+      });
+    }),
+});
+
 // ── appRouter (root) ──────────────────────────────────────────────────────────
 
 export const appRouter = router({
@@ -4253,6 +4400,7 @@ export const appRouter = router({
   project: projectRouter,
   projectTask: projectTaskRouter,
   claude: claudeRouter,
+  chat: chatRouter,
 });
 
 export type AppRouter = typeof appRouter;

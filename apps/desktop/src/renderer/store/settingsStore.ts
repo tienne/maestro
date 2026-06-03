@@ -71,6 +71,10 @@ interface SettingsState {
   customThemeName: string;
   /** 태스크 생성 AI 인터뷰 시스템 프롬프트 (undefined이면 DEFAULT_INTERVIEW_SYSTEM_PROMPT 사용) */
   taskCreationSystemPrompt?: string;
+  /** 마지막으로 선택한 채팅 프로바이더 */
+  lastChatProvider?: string;
+  /** 마지막으로 선택한 채팅 모델 */
+  lastChatModel?: string;
 }
 
 const DEFAULT_SETTINGS: SettingsState = {
@@ -93,6 +97,8 @@ const DEFAULT_SETTINGS: SettingsState = {
   customThemeVariables: {},
   customThemeName: '',
   taskCreationSystemPrompt: undefined,
+  lastChatProvider: undefined,
+  lastChatModel: undefined,
 };
 
 // ---------------------------------------------------------------------------
@@ -210,6 +216,18 @@ export const taskCreationSystemPromptAtom = atom(
     set(settingsAtom, (s) => ({ ...s, taskCreationSystemPrompt }))
 );
 
+export const lastChatProviderAtom = atom(
+  (get) => get(settingsAtom).lastChatProvider,
+  (_get, set, lastChatProvider: string | undefined) =>
+    set(settingsAtom, (s) => ({ ...s, lastChatProvider }))
+);
+
+export const lastChatModelAtom = atom(
+  (get) => get(settingsAtom).lastChatModel,
+  (_get, set, lastChatModel: string | undefined) =>
+    set(settingsAtom, (s) => ({ ...s, lastChatModel }))
+);
+
 // ---------------------------------------------------------------------------
 // Jotai store instance — .getState() 호환용
 // ---------------------------------------------------------------------------
@@ -241,6 +259,8 @@ interface SettingsStore extends SettingsState {
   setCustomThemeName: (name: string) => void;
   applyCustomTheme: (variables: Record<string, string>) => void;
   setTaskCreationSystemPrompt: (prompt: string | undefined) => void;
+  setLastChatProvider: (provider: string | undefined) => void;
+  setLastChatModel: (model: string | undefined) => void;
 }
 
 function buildSnapshot(s: SettingsState): SettingsStore {
@@ -265,6 +285,8 @@ function buildSnapshot(s: SettingsState): SettingsStore {
     setCustomThemeVariables: (variables) => jotaiStore.set(customThemeVariablesAtom, variables),
     setCustomThemeName: (name) => jotaiStore.set(customThemeNameAtom, name),
     setTaskCreationSystemPrompt: (prompt) => jotaiStore.set(taskCreationSystemPromptAtom, prompt),
+    setLastChatProvider: (provider) => jotaiStore.set(lastChatProviderAtom, provider),
+    setLastChatModel: (model) => jotaiStore.set(lastChatModelAtom, model),
     applyCustomTheme: (variables) => {
       for (const [key, value] of Object.entries(variables)) {
         document.documentElement.style.setProperty(key, value);

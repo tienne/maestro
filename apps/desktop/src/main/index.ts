@@ -8,6 +8,9 @@ import { setupAutoUpdater } from './auto-updater';
 import { setupDeepLink } from './deep-link';
 import { setupWindowManager } from './window-manager';
 
+// maestro:// protocol client 등록 — OAuth callback 수신용
+app.setAsDefaultProtocolClient('maestro');
+
 let mainWindow: BrowserWindow | null = null;
 let splashWindow: BrowserWindow | null = null;
 
@@ -126,6 +129,30 @@ app.whenReady().then(async () => {
     return hostServiceManager.getPort();
   });
 
+  // chat OAuth IPC 핸들러
+  ipcMain.handle('chat:oauth:start', async (_event, args: { provider: string }) => {
+    const { chatOAuthService } = await import('../services/chat-oauth-service');
+    await chatOAuthService.startOAuth(args.provider as import('@maestro/shared-types').ChatProvider);
+    return { started: true };
+  });
+
+  ipcMain.handle('chat:oauth:getStatus', async (_event, args: { provider: string }) => {
+    const { chatOAuthService } = await import('../services/chat-oauth-service');
+    return { connected: chatOAuthService.isConnected(args.provider as import('@maestro/shared-types').ChatProvider) };
+  });
+
+  ipcMain.handle('chat:oauth:disconnect', async (_event, args: { provider: string }) => {
+    const { chatOAuthService } = await import('../services/chat-oauth-service');
+    chatOAuthService.deleteTokens(args.provider as import('@maestro/shared-types').ChatProvider);
+    return { success: true };
+  });
+
+  ipcMain.handle('chat:oauth:getToken', async (_event, args: { provider: string }) => {
+    const { chatOAuthService } = await import('../services/chat-oauth-service');
+    const tokens = chatOAuthService.getTokens(args.provider as import('@maestro/shared-types').ChatProvider);
+    return tokens ? { accessToken: tokens.accessToken } : null;
+  });
+
   // M11-03: 릴레이 서버 연결 (RELAY_SERVER_URL 설정 시에만)
   if (process.env['RELAY_SERVER_URL']) {
     const { relayClient } = await import('./relay-client');
@@ -185,6 +212,20 @@ app.whenReady().then(async () => {
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     app.quit();
+  }
+});
+
+// macOS: custom protocol URL 수신 (OAuth callback)
+app.on('open-url', (_event, url) => {
+  if (url.startsWith('maestro://oauth/callback')) {
+    import('../services/chat-oauth-service').then(({ chatOAuthService }) => {
+      chatOAuthService.handleCallback(url).then(({ provider, success }) => {
+        const windows = BrowserWindow.getAllWindows();
+        windows.forEach((win) => {
+          win.webContents.send('chat:oauth:result', { provider, success });
+        });
+      }).catch(() => { /* ignore */ });
+    }).catch(() => { /* ignore */ });
   }
 });
 
