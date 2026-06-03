@@ -1,0 +1,115 @@
+export const fontFamilies = {
+  ui: 'Inter Variable, Inter, Helvetica, Arial, sans-serif',
+  display: 'NeueHaasGrotesk Display, Helvetica, Arial, sans-serif',
+  code: 'Geist Mono, ui-monospace, SFMono-Regular, Menlo, monospace',
+} as const;
+
+export const typography = {
+  'display-xxl': {
+    fontFamily: fontFamilies.display,
+    fontSize: 96,
+    fontWeight: 330,
+    lineHeight: 1.0,
+    letterSpacing: 2.4,
+  },
+  'display-xl': {
+    fontFamily: fontFamilies.display,
+    fontSize: 70,
+    fontWeight: 330,
+    lineHeight: 1.0,
+    letterSpacing: 0,
+  },
+  'display-lg': {
+    fontFamily: fontFamilies.display,
+    fontSize: 55,
+    fontWeight: 330,
+    lineHeight: 1.16,
+    letterSpacing: 0,
+  },
+  'display-md': {
+    fontFamily: fontFamilies.display,
+    fontSize: 48,
+    fontWeight: 330,
+    lineHeight: 1.14,
+    letterSpacing: 0,
+  },
+  'heading-xl': {
+    fontFamily: fontFamilies.display,
+    fontSize: 28,
+    fontWeight: 500,
+    lineHeight: 1.28,
+    letterSpacing: 0.42,
+  },
+  'heading-lg': {
+    fontFamily: fontFamilies.display,
+    fontSize: 24,
+    fontWeight: 400,
+    lineHeight: 1.14,
+    letterSpacing: 0.36,
+  },
+  'heading-md': {
+    fontFamily: fontFamilies.display,
+    fontSize: 20,
+    fontWeight: 500,
+    lineHeight: 1.4,
+    letterSpacing: 0.3,
+  },
+  'heading-sm': {
+    fontFamily: fontFamilies.display,
+    fontSize: 18,
+    fontWeight: 500,
+    lineHeight: 1.25,
+    letterSpacing: 0.72,
+  },
+  'body-lg': {
+    fontFamily: fontFamilies.ui,
+    fontSize: 18,
+    fontWeight: 550,
+    lineHeight: 1.56,
+    letterSpacing: 0,
+  },
+  'body-md': {
+    fontFamily: fontFamilies.ui,
+    fontSize: 16,
+    fontWeight: 420,
+    lineHeight: 1.5,
+    letterSpacing: 0,
+  },
+  'body-strong': {
+    fontFamily: fontFamilies.ui,
+    fontSize: 16,
+    fontWeight: 550,
+    lineHeight: 1.5,
+    letterSpacing: 0,
+  },
+  caption: {
+    fontFamily: fontFamilies.ui,
+    fontSize: 14,
+    fontWeight: 500,
+    lineHeight: 1.49,
+    letterSpacing: 0.28,
+  },
+  micro: {
+    fontFamily: fontFamilies.ui,
+    fontSize: 13,
+    fontWeight: 500,
+    lineHeight: 1.5,
+    letterSpacing: -0.13,
+  },
+  'eyebrow-cap': {
+    fontFamily: fontFamilies.ui,
+    fontSize: 12,
+    fontWeight: 400,
+    lineHeight: 1.2,
+    letterSpacing: 0.72,
+  },
+  code: {
+    fontFamily: fontFamilies.code,
+    fontSize: 16,
+    fontWeight: 400,
+    lineHeight: 1.5,
+    letterSpacing: 0,
+  },
+} as const;
+
+export type TypographyToken = keyof typeof typography;

@@ -1,7 +1,7 @@
 ---
 version: alpha
-name: Shopifi-design-analysis
-description: An inspired interpretation of Shopifi's design language — a cinematic commerce platform that runs two parallel design tracks. The marketing-hero and product-narrative pages live on near-black canvases with full-bleed photography of merchants, giant Neue Haas Grotesk display type at thin weights, and a single black-pill CTA stroked in white. The transactional pages (pricing, signup, dashboards) flip to a cream-mint canvas with pastel aloe and pistachio greens, the same pill button vocabulary, and Inter for UI body. The two tracks share typographic DNA but diverge sharply in canvas polarity — and that choice is the brand.
+name: Maestro-design-system
+description: An inspired interpretation of Maestro's design language — a cinematic commerce platform that runs two parallel design tracks. The marketing-hero and product-narrative pages live on near-black canvases with full-bleed photography of merchants, giant Neue Haas Grotesk display type at thin weights, and a single black-pill CTA stroked in white. The transactional pages (pricing, signup, dashboards) flip to a cream-mint canvas with pastel aloe and pistachio greens, the same pill button vocabulary, and Inter for UI body. The two tracks share typographic DNA but diverge sharply in canvas polarity — and that choice is the brand.
 
 colors:
   primary: "#000000"
@@ -22,6 +22,12 @@ colors:
   hairline-dark: "#1e2c31"
   aloe-10: "#c1fbd4"
   pistachio-10: "#d4f9e0"
+  status-running: "#22c55e"
+  status-success: "#16a34a"
+  status-warning: "#f59e0b"
+  status-danger: "#ef4444"
+  status-idle: "#71717a"
+  status-completed: "#52525b"
   link-cool-1: "#9dabad"
   link-cool-2: "#9797a2"
   link-cool-3: "#bdbdca"
@@ -127,12 +133,17 @@ typography:
     letterSpacing: 0.72px
     fontFeature: ss03
   code:
-    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace"
+    fontFamily: "Geist Mono, ui-monospace, SFMono-Regular, Menlo, monospace"
     fontSize: 16px
     fontWeight: 400
     lineHeight: 1.5
     letterSpacing: 0
     fontFeature: ss03
+
+fonts:
+  ui: "Inter Variable, Inter, Helvetica, Arial, sans-serif"
+  display: "NeueHaasGrotesk Display, Helvetica, Arial, sans-serif"
+  code: "Geist Mono, ui-monospace, SFMono-Regular, Menlo, monospace"
 
 rounded:
   xs: 4px
@@ -265,7 +276,7 @@ components:
 
 ## Overview
 
-Shopifi runs two parallel design tracks that share typographic DNA and a single button vocabulary, but diverge in canvas polarity. The marketing track lives on `{colors.canvas-night}` (`#000000`) — full-bleed cinematic photography of merchants, giant `{typography.display-xxl}` headlines in Neue Haas Grotesk Display set at weight 330 (a thin, almost editorial cut), and a single CTA: a white-stroked black pill with the form `button-outline-on-dark`. The pages read like the spread of a high-end print magazine: lots of black, lots of negative space, photography that doesn't compete with text, and one and only one action per band.
+Maestro runs two parallel design tracks that share typographic DNA and a single button vocabulary, but diverge in canvas polarity. The marketing track lives on `{colors.canvas-night}` (`#000000`) — full-bleed cinematic photography of merchants, giant `{typography.display-xxl}` headlines in Neue Haas Grotesk Display set at weight 330 (a thin, almost editorial cut), and a single CTA: a white-stroked black pill with the form `button-outline-on-dark`. The pages read like the spread of a high-end print magazine: lots of black, lots of negative space, photography that doesn't compete with text, and one and only one action per band.
 
 The transactional track flips to `{colors.canvas-light}` and `{colors.canvas-cream}` (an off-white that's barely warmer than pure white). Pricing tiers, comparison tables, and signup flows sit on this lighter canvas, with the same pill button system but in inverse polarity (a solid black pill with white text, or a `{colors.aloe-10}` mint pill for the featured / "Start free trial" tier). The accents — `{colors.aloe-10}` mint and `{colors.pistachio-10}` pistachio — show up only on the light track, never on the cinematic dark hero pages.
 
