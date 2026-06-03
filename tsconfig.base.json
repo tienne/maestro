@@ -16,7 +16,8 @@
     "baseUrl": ".",
     "paths": {
       "@maestro/shared-types": ["packages/shared-types/src/index.ts"],
-      "@maestro/cli": ["packages/cli/src/index.ts"]
+      "@maestro/cli": ["packages/cli/src/index.ts"],
+      "@maestro/tokens": ["packages/tokens/src/index.ts"]
     }
   }
 }

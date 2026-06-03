@@ -99,6 +99,19 @@
       "goal": "Maestro Electron 데스크탑 앱을 Superset과 동등한 현대 아키텍처로 전면 마이그레이션 — TanStack Router, Jotai, TanStack Query, Electric SQL, shadcn/ui, @assistant-ui/react, @ai-sdk/anthropic+openai, Mastra(@mastra/core) Agent·Workflow·Tool·Memory, SuperJSON tRPC transformer, drizzle-orm(better-sqlite3 ORM 레이어), lowdb(App UI 상태 JSON 영속화) 도입",
       "createdAt": "2026-05-25T12:58:12.233Z",
       "sourceType": "text"
+    },
+    {
+      "specId": "95de6863-8b02-4769-9dcf-2846a9803082",
+      "goal": "DESIGN.md 토큰 시스템을 기반으로 Maestro 앱(데스크탑 Electron + 모바일 Expo/React Native)의 모든 화면을 전면 재설계한다. 개발자 도구 전용 컴포넌트 시스템과 공유 토큰 패키지(packages/tokens)를 구축하여 라이트/다크 테마를 일관되게 지원하고, 에이전트 실행 상태를 통일된 시각 언어로 표현한다.",
+      "createdAt": "2026-05-25T15:24:28.537Z",
+      "interviewSessionId": "a346e60a-8590-4dc7-bf60-f75cb33158c8",
+      "sourceType": "interview"
+    },
+    {
+      "specId": "a104f5f3-02c2-4ca3-ad29-04e1e27ff748",
+      "goal": "Maestro 채팅 패널에서 Claude(Anthropic), ChatGPT(OpenAI), Gemini(Google) 세 AI 프로바이더를 Electron PKCE OAuth로 인증하고, Vercel AI SDK streamText 기반 실시간 스트리밍 채팅을 지원하며, 대화 히스토리를 SQLite에 영구 저장한다",
+      "createdAt": "2026-05-31T07:34:20.853Z",
+      "sourceType": "text"
     }
   ],
   "executionHistory": [
@@ -277,5 +290,5 @@
     }
   ],
   "architectureDecisions": [],
-  "lastUpdated": "2026-05-25T14:27:15.498Z"
+  "lastUpdated": "2026-05-31T07:34:20.867Z"
 }
