@@ -10,7 +10,7 @@
 
 import { initTRPC } from '@trpc/server';
 import { z } from 'zod';
-import type { Workspace, Repository, Agent, Session, SessionCostSummary, TaskItem, ErrorInfo, SessionIntelligence, AgentPreset, SessionLabel, WorkspaceTemplate, WorkspaceSnapshot, WorkspaceWithHooks, Webhook, WebhookLog, ApiKey, PluginInfo, ArchiveSearchResult, CustomTheme, SettingsProfile, Project, ProjectTask } from './index';
+import type { Workspace, Repository, Agent, Session, SessionCostSummary, TaskItem, ErrorInfo, SessionIntelligence, AgentPreset, SessionLabel, WorkspaceTemplate, WorkspaceSnapshot, WorkspaceWithHooks, Webhook, WebhookLog, ApiKey, PluginInfo, ArchiveSearchResult, CustomTheme, SettingsProfile, Project, ProjectTask, ChatSession, ChatMessage } from './index';
 
 // ── tRPC instance ─────────────────────────────────────────────────────────────
 
@@ -1082,6 +1082,57 @@ export const claudeRouter = router({
     }),
 });
 
+// ── chatRouter ────────────────────────────────────────────────────────────────
+
+export const ChatProviderSchema = z.enum(['anthropic', 'openai', 'google']);
+
+export const GetOrCreateChatSessionSchema = z.object({
+  workspaceId: z.string(),
+  provider: ChatProviderSchema,
+  model: z.string().min(1),
+});
+
+/** @deprecated Use GetOrCreateChatSessionSchema */
+export const CreateChatSessionSchema = GetOrCreateChatSessionSchema;
+
+export const ChatStreamSchema = z.object({
+  sessionId: z.string(),
+  provider: ChatProviderSchema,
+  model: z.string().min(1),
+  messages: z.array(z.object({ role: z.enum(['user', 'assistant']), content: z.string() })),
+  accessToken: z.string(),
+});
+
+export const chatRouter = router({
+  // 채팅 세션 조회 또는 생성 (동일 workspaceId+provider+model 조합이면 기존 세션 반환)
+  getOrCreateSession: publicProcedure
+    .input(GetOrCreateChatSessionSchema)
+    .mutation((): ChatSession => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
+
+  // 메시지 목록 조회
+  listMessages: publicProcedure
+    .input(z.object({ sessionId: z.string(), limit: z.number().int().positive().max(200).default(50) }))
+    .query((): ChatMessage[] => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
+
+  // 세션 메시지 전체 삭제
+  clearSession: publicProcedure
+    .input(z.object({ sessionId: z.string() }))
+    .mutation((): { success: boolean } => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
+
+  // 스트리밍 응답 구독 (subscription)
+  stream: publicProcedure
+    .input(ChatStreamSchema)
+    .subscription(() => {
+      throw new Error('Not implemented — use IPC handler');
+    }),
+});
+
 // ── Root app router ───────────────────────────────────────────────────────────
 
 /**
@@ -1448,6 +1499,7 @@ export const appRouter = router({
   project: projectRouter,
   projectTask: projectTaskRouter,
   claude: claudeRouter,
+  chat: chatRouter,
 });
 
 // ── Type exports ──────────────────────────────────────────────────────────────
@@ -1475,3 +1527,4 @@ export type ThemeRouter = typeof themeRouter;
 export type ProjectRouter = typeof projectRouter;
 export type ProjectTaskRouter = typeof projectTaskRouter;
 export type ClaudeRouter = typeof claudeRouter;
+export type ChatRouter = typeof chatRouter;

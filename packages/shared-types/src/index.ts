@@ -231,7 +231,9 @@ export const IDE_LABELS: Record<IdeType, string> = {
 };
 
 // tRPC router types and Zod schemas
-export * from './trpc';
+// trpc.ts는 @trpc/server를 사용하므로 renderer에서 직접 import 불가
+// AppRouter 타입만 type-only re-export — 런타임에 trpc.ts 코드가 로드되지 않음
+export type { AppRouter, ProcessMetrics } from './trpc';
 
 // ── M6: Remote Control & API ─────────────────────────────────────────────
 
@@ -325,4 +327,51 @@ export interface SessionOutputPayload {
 export interface SessionStatusPayload {
   sessionId: string;
   status: SessionStatus;
+}
+
+// ── Chat Multi-Provider ───────────────────────────────────────────────────────
+
+export type ChatProvider = 'anthropic' | 'openai' | 'google';
+
+export type ChatProviderStatus = 'disconnected' | 'connecting' | 'connected' | 'expired';
+
+export interface ChatModel {
+  id: string;
+  provider: ChatProvider;
+  displayName: string;
+  contextWindow: number;
+}
+
+export const CHAT_MODELS: ChatModel[] = [
+  { id: 'claude-opus-4-5-20251101', provider: 'anthropic', displayName: 'Claude Opus 4.5', contextWindow: 200000 },
+  { id: 'claude-sonnet-4-5-20251022', provider: 'anthropic', displayName: 'Claude Sonnet 4.5', contextWindow: 200000 },
+  { id: 'claude-haiku-4-5-20251001', provider: 'anthropic', displayName: 'Claude Haiku 4.5', contextWindow: 200000 },
+  { id: 'gpt-4o', provider: 'openai', displayName: 'GPT-4o', contextWindow: 128000 },
+  { id: 'gpt-4o-mini', provider: 'openai', displayName: 'GPT-4o mini', contextWindow: 128000 },
+  { id: 'o4-mini', provider: 'openai', displayName: 'o4-mini', contextWindow: 200000 },
+  { id: 'o3', provider: 'openai', displayName: 'o3', contextWindow: 200000 },
+  { id: 'gemini-2.5-pro', provider: 'google', displayName: 'Gemini 2.5 Pro', contextWindow: 1000000 },
+  { id: 'gemini-2.5-flash', provider: 'google', displayName: 'Gemini 2.5 Flash', contextWindow: 1000000 },
+  { id: 'gemini-2.0-flash', provider: 'google', displayName: 'Gemini 2.0 Flash', contextWindow: 1000000 },
+];
+
+export interface ChatSession {
+  id: string;
+  workspaceId: string;
+  provider: ChatProvider;
+  model: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type ChatRole = 'user' | 'assistant';
+
+export interface ChatMessage {
+  id: string;
+  sessionId: string;
+  role: ChatRole;
+  content: string;
+  provider: ChatProvider;
+  model: string;
+  createdAt: string;
 }
