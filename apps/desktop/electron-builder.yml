@@ -2,8 +2,12 @@ appId: com.maestro.desktop
 productName: Maestro
 copyright: Copyright © 2024 Maestro
 
-# native module (better-sqlite3, node-pty) 재빌드 필수
-npmRebuild: true
+# 네이티브 모듈은 pnpm.onlyBuiltDependencies가 설치 시 빌드하므로
+# electron-builder의 npm rebuild(pnpm 모노레포에서 깨짐)는 비활성화한다.
+# 단, 설치 빌드는 시스템 Node ABI 기준이므로 패키징/실행 전 Electron ABI로
+# 맞추려면 `nx run desktop:rebuild`(electron-rebuild)를 선행해야 한다.
+# (`pnpm rebuild`는 시스템 ABI라 Electron에서 NODE_MODULE_VERSION 불일치 발생)
+npmRebuild: false
 
 directories:
   buildResources: icons
@@ -13,6 +17,11 @@ files:
   - out/**/*
   - node_modules/**/*
   - package.json
+
+# native module은 app.asar 내부에서 dlopen 불가 → 반드시 unpack
+asarUnpack:
+  - node_modules/better-sqlite3/**
+  - node_modules/node-pty/**
 
 extraResources:
   - from: icons
