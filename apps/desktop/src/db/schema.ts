@@ -2,7 +2,7 @@
  * Drizzle ORM 스키마 정의
  *
  * database.ts의 CREATE TABLE 문을 drizzle-orm/sqlite-core로 변환.
- * app_state 테이블은 lowdb로 이전 예정이므로 제외.
+ * app_state 테이블: M13에서 SQLite로 통합 (lowdb 제거).
  *
  * 마이그레이션 순서 반영:
  *   초기: repositories, env_vars, workspaces, agents, sessions,
@@ -21,6 +21,7 @@
  *   M11:  projects, tasks
  *         workspaces: task_id
  *         sessions: is_favorite (M2)
+ *   M13:  app_state (lowdb → SQLite 전환)
  */
 
 import {
@@ -439,6 +440,16 @@ export const chatSessions = sqliteTable(
 
 export type ChatSession    = InferSelectModel<typeof chatSessions>;
 export type NewChatSession = InferInsertModel<typeof chatSessions>;
+
+// ── app_state (M13) ───────────────────────────────────────────────────────────
+
+export const appState = sqliteTable('app_state', {
+  key:   text('key').primaryKey(),
+  value: text('value').notNull(),
+});
+
+export type AppStateRow    = InferSelectModel<typeof appState>;
+export type NewAppStateRow = InferInsertModel<typeof appState>;
 
 // ── chat_messages (M12) ───────────────────────────────────────────────────────
 

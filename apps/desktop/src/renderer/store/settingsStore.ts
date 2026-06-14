@@ -1,6 +1,5 @@
-import { atom, getDefaultStore } from 'jotai';
-import { atomWithStorage } from 'jotai/utils';
-import { useAtom } from 'jotai';
+import { create } from 'zustand';
+import { persist, createJSONStorage } from 'zustand/middleware';
 
 // ---------------------------------------------------------------------------
 // Re-exports (타입/상수 하위 호환)
@@ -102,140 +101,7 @@ const DEFAULT_SETTINGS: SettingsState = {
 };
 
 // ---------------------------------------------------------------------------
-// Base atom — localStorage 자동 persist (Zustand persist 미들웨어 대체)
-// ---------------------------------------------------------------------------
-
-export const settingsAtom = atomWithStorage<SettingsState>('maestro-settings', DEFAULT_SETTINGS);
-
-// ---------------------------------------------------------------------------
-// 개별 derived atoms (selector 성능 최적화용)
-// ---------------------------------------------------------------------------
-
-export const themeAtom = atom(
-  (get) => get(settingsAtom).theme,
-  (_get, set, theme: AppTheme) => set(settingsAtom, (s) => ({ ...s, theme }))
-);
-
-export const fontSizeAtom = atom(
-  (get) => get(settingsAtom).fontSize,
-  (_get, set, fontSize: FontSize) => set(settingsAtom, (s) => ({ ...s, fontSize }))
-);
-
-export const terminalFontSizeAtom = atom(
-  (get) => get(settingsAtom).terminalFontSize,
-  (_get, set, terminalFontSize: number) => set(settingsAtom, (s) => ({ ...s, terminalFontSize }))
-);
-
-export const soundEnabledAtom = atom(
-  (get) => get(settingsAtom).soundEnabled,
-  (_get, set, soundEnabled: boolean) => set(settingsAtom, (s) => ({ ...s, soundEnabled }))
-);
-
-export const telemetryEnabledAtom = atom(
-  (get) => get(settingsAtom).telemetryEnabled,
-  (_get, set, enabled: boolean) => {
-    set(settingsAtom, (s) => ({ ...s, telemetryEnabled: enabled }));
-    // 즉시 posthog opt-in/out
-    import('../lib/telemetry').then(({ telemetry }) => telemetry.setEnabled(enabled));
-  }
-);
-
-export const terminalThemeAtom = atom(
-  (get) => get(settingsAtom).terminalTheme,
-  (_get, set, terminalTheme: TerminalThemeName) => set(settingsAtom, (s) => ({ ...s, terminalTheme }))
-);
-
-export const terminalFontAtom = atom(
-  (get) => get(settingsAtom).terminalFont,
-  (_get, set, terminalFont: TerminalFontFamily) => set(settingsAtom, (s) => ({ ...s, terminalFont }))
-);
-
-export const costWarningThresholdAtom = atom(
-  (get) => get(settingsAtom).costWarningThreshold,
-  (_get, set, costWarningThreshold: number) => set(settingsAtom, (s) => ({ ...s, costWarningThreshold }))
-);
-
-export const scrollbackLinesAtom = atom(
-  (get) => get(settingsAtom).scrollbackLines,
-  (_get, set, lines: number) =>
-    set(settingsAtom, (s) => ({ ...s, scrollbackLines: Math.min(20000, Math.max(1000, lines)) }))
-);
-
-export const cpuAlertThresholdAtom = atom(
-  (get) => get(settingsAtom).cpuAlertThreshold,
-  (_get, set, cpuAlertThreshold: number) => set(settingsAtom, (s) => ({ ...s, cpuAlertThreshold }))
-);
-
-export const memAlertThresholdMbAtom = atom(
-  (get) => get(settingsAtom).memAlertThresholdMb,
-  (_get, set, memAlertThresholdMb: number) => set(settingsAtom, (s) => ({ ...s, memAlertThresholdMb }))
-);
-
-export const sessionGcDaysAtom = atom(
-  (get) => get(settingsAtom).sessionGcDays,
-  (_get, set, sessionGcDays: number) => set(settingsAtom, (s) => ({ ...s, sessionGcDays }))
-);
-
-export const onboardingCompletedAtom = atom(
-  (get) => get(settingsAtom).onboardingCompleted,
-  (_get, set, onboardingCompleted: boolean) => set(settingsAtom, (s) => ({ ...s, onboardingCompleted }))
-);
-
-export const accentColorAtom = atom(
-  (get) => get(settingsAtom).accentColor,
-  (_get, set, accentColor: string) => {
-    set(settingsAtom, (s) => ({ ...s, accentColor }));
-    document.documentElement.style.setProperty('--accent', accentColor);
-  }
-);
-
-export const appThemeNameAtom = atom(
-  (get) => get(settingsAtom).appThemeName,
-  (_get, set, appThemeName: AppThemeName) => set(settingsAtom, (s) => ({ ...s, appThemeName }))
-);
-
-export const archiveEnabledAtom = atom(
-  (get) => get(settingsAtom).archiveEnabled,
-  (_get, set, archiveEnabled: boolean) => set(settingsAtom, (s) => ({ ...s, archiveEnabled }))
-);
-
-export const customThemeVariablesAtom = atom(
-  (get) => get(settingsAtom).customThemeVariables,
-  (_get, set, customThemeVariables: Record<string, string>) =>
-    set(settingsAtom, (s) => ({ ...s, customThemeVariables }))
-);
-
-export const customThemeNameAtom = atom(
-  (get) => get(settingsAtom).customThemeName,
-  (_get, set, customThemeName: string) => set(settingsAtom, (s) => ({ ...s, customThemeName }))
-);
-
-export const taskCreationSystemPromptAtom = atom(
-  (get) => get(settingsAtom).taskCreationSystemPrompt,
-  (_get, set, taskCreationSystemPrompt: string | undefined) =>
-    set(settingsAtom, (s) => ({ ...s, taskCreationSystemPrompt }))
-);
-
-export const lastChatProviderAtom = atom(
-  (get) => get(settingsAtom).lastChatProvider,
-  (_get, set, lastChatProvider: string | undefined) =>
-    set(settingsAtom, (s) => ({ ...s, lastChatProvider }))
-);
-
-export const lastChatModelAtom = atom(
-  (get) => get(settingsAtom).lastChatModel,
-  (_get, set, lastChatModel: string | undefined) =>
-    set(settingsAtom, (s) => ({ ...s, lastChatModel }))
-);
-
-// ---------------------------------------------------------------------------
-// Jotai store instance — .getState() 호환용
-// ---------------------------------------------------------------------------
-
-const jotaiStore = getDefaultStore();
-
-// ---------------------------------------------------------------------------
-// Zustand 호환 스토어 인터페이스
+// Zustand 스토어 인터페이스
 // ---------------------------------------------------------------------------
 
 interface SettingsStore extends SettingsState {
@@ -263,51 +129,53 @@ interface SettingsStore extends SettingsState {
   setLastChatModel: (model: string | undefined) => void;
 }
 
-function buildSnapshot(s: SettingsState): SettingsStore {
-  return {
-    ...s,
-    setTheme: (theme) => jotaiStore.set(themeAtom, theme),
-    setFontSize: (size) => jotaiStore.set(fontSizeAtom, size),
-    setTerminalFontSize: (size) => jotaiStore.set(terminalFontSizeAtom, size),
-    setSoundEnabled: (enabled) => jotaiStore.set(soundEnabledAtom, enabled),
-    setTelemetryEnabled: (enabled) => jotaiStore.set(telemetryEnabledAtom, enabled),
-    setTerminalTheme: (theme) => jotaiStore.set(terminalThemeAtom, theme),
-    setTerminalFont: (font) => jotaiStore.set(terminalFontAtom, font),
-    setCostWarningThreshold: (threshold) => jotaiStore.set(costWarningThresholdAtom, threshold),
-    setScrollbackLines: (lines) => jotaiStore.set(scrollbackLinesAtom, lines),
-    setCpuAlertThreshold: (threshold) => jotaiStore.set(cpuAlertThresholdAtom, threshold),
-    setMemAlertThresholdMb: (threshold) => jotaiStore.set(memAlertThresholdMbAtom, threshold),
-    setSessionGcDays: (days) => jotaiStore.set(sessionGcDaysAtom, days),
-    setOnboardingCompleted: (completed) => jotaiStore.set(onboardingCompletedAtom, completed),
-    setAccentColor: (color) => jotaiStore.set(accentColorAtom, color),
-    setAppThemeName: (name) => jotaiStore.set(appThemeNameAtom, name),
-    setArchiveEnabled: (enabled) => jotaiStore.set(archiveEnabledAtom, enabled),
-    setCustomThemeVariables: (variables) => jotaiStore.set(customThemeVariablesAtom, variables),
-    setCustomThemeName: (name) => jotaiStore.set(customThemeNameAtom, name),
-    setTaskCreationSystemPrompt: (prompt) => jotaiStore.set(taskCreationSystemPromptAtom, prompt),
-    setLastChatProvider: (provider) => jotaiStore.set(lastChatProviderAtom, provider),
-    setLastChatModel: (model) => jotaiStore.set(lastChatModelAtom, model),
-    applyCustomTheme: (variables) => {
-      for (const [key, value] of Object.entries(variables)) {
-        document.documentElement.style.setProperty(key, value);
-      }
-      jotaiStore.set(customThemeVariablesAtom, variables);
-    },
-  };
-}
+// ---------------------------------------------------------------------------
+// Zustand persist 스토어 — localStorage key 'maestro-settings' 유지 (기존 설정 보존)
+// ---------------------------------------------------------------------------
 
-/** 기존 `useSettingsStore((s) => s.field)` selector 패턴 호환 */
-export function useSettingsStore(): SettingsStore;
-export function useSettingsStore<T>(selector: (state: SettingsStore) => T): T;
-export function useSettingsStore<T>(selector?: (state: SettingsStore) => T): SettingsStore | T {
-  const [settings] = useAtom(settingsAtom);
-  const snapshot = buildSnapshot(settings);
-  if (selector) return selector(snapshot);
-  return snapshot;
-}
+export const useSettingsStore = create<SettingsStore>()(
+  persist(
+    (set) => ({
+      ...DEFAULT_SETTINGS,
 
-/** 기존 `useSettingsStore.getState()` 패턴 호환 */
-useSettingsStore.getState = (): SettingsStore => {
-  const settings = jotaiStore.get(settingsAtom);
-  return buildSnapshot(settings);
-};
+      setTheme: (theme) => set({ theme }),
+      setFontSize: (fontSize) => set({ fontSize }),
+      setTerminalFontSize: (terminalFontSize) => set({ terminalFontSize }),
+      setSoundEnabled: (soundEnabled) => set({ soundEnabled }),
+      setTelemetryEnabled: (telemetryEnabled) => {
+        set({ telemetryEnabled });
+        import('../lib/telemetry').then(({ telemetry }) => telemetry.setEnabled(telemetryEnabled));
+      },
+      setTerminalTheme: (terminalTheme) => set({ terminalTheme }),
+      setTerminalFont: (terminalFont) => set({ terminalFont }),
+      setCostWarningThreshold: (costWarningThreshold) => set({ costWarningThreshold }),
+      setScrollbackLines: (lines) =>
+        set({ scrollbackLines: Math.min(20000, Math.max(1000, lines)) }),
+      setCpuAlertThreshold: (cpuAlertThreshold) => set({ cpuAlertThreshold }),
+      setMemAlertThresholdMb: (memAlertThresholdMb) => set({ memAlertThresholdMb }),
+      setSessionGcDays: (sessionGcDays) => set({ sessionGcDays }),
+      setOnboardingCompleted: (onboardingCompleted) => set({ onboardingCompleted }),
+      setAccentColor: (accentColor) => {
+        set({ accentColor });
+        document.documentElement.style.setProperty('--accent', accentColor);
+      },
+      setAppThemeName: (appThemeName) => set({ appThemeName }),
+      setArchiveEnabled: (archiveEnabled) => set({ archiveEnabled }),
+      setCustomThemeVariables: (customThemeVariables) => set({ customThemeVariables }),
+      setCustomThemeName: (customThemeName) => set({ customThemeName }),
+      applyCustomTheme: (variables) => {
+        for (const [key, value] of Object.entries(variables)) {
+          document.documentElement.style.setProperty(key, value);
+        }
+        set({ customThemeVariables: variables });
+      },
+      setTaskCreationSystemPrompt: (taskCreationSystemPrompt) => set({ taskCreationSystemPrompt }),
+      setLastChatProvider: (lastChatProvider) => set({ lastChatProvider }),
+      setLastChatModel: (lastChatModel) => set({ lastChatModel }),
+    }),
+    {
+      name: 'maestro-settings', // 기존 localStorage 키 유지 → 사용자 설정 보존
+      storage: createJSONStorage(() => localStorage),
+    }
+  )
+);

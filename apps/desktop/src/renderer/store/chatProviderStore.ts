@@ -1,21 +1,31 @@
-import { atom, getDefaultStore } from 'jotai';
+import { create } from 'zustand';
 import type { ChatProvider, ChatProviderStatus } from '@maestro/shared-types';
 
 // ---------------------------------------------------------------------------
-// Base atoms — 프로바이더별 연결 상태
+// Zustand 스토어
 // ---------------------------------------------------------------------------
 
-export const openaiStatusAtom = atom<ChatProviderStatus>('disconnected');
-export const openaiEmailAtom = atom<string | undefined>(undefined);
+interface ChatProviderStore {
+  openaiStatus: ChatProviderStatus;
+  openaiEmail?: string;
+  googleStatus: ChatProviderStatus;
+  googleEmail?: string;
+  setOpenaiStatus: (status: ChatProviderStatus) => void;
+  setOpenaiEmail: (email: string | undefined) => void;
+  setGoogleStatus: (status: ChatProviderStatus) => void;
+  setGoogleEmail: (email: string | undefined) => void;
+}
 
-export const googleStatusAtom = atom<ChatProviderStatus>('disconnected');
-export const googleEmailAtom = atom<string | undefined>(undefined);
-
-// ---------------------------------------------------------------------------
-// Jotai store instance
-// ---------------------------------------------------------------------------
-
-const jotaiStore = getDefaultStore();
+export const useChatProviderStore = create<ChatProviderStore>((set) => ({
+  openaiStatus: 'disconnected',
+  openaiEmail: undefined,
+  googleStatus: 'disconnected',
+  googleEmail: undefined,
+  setOpenaiStatus: (openaiStatus) => set({ openaiStatus }),
+  setOpenaiEmail: (openaiEmail) => set({ openaiEmail }),
+  setGoogleStatus: (googleStatus) => set({ googleStatus }),
+  setGoogleEmail: (googleEmail) => set({ googleEmail }),
+}));
 
 // ---------------------------------------------------------------------------
 // 초기화 — 앱 시작 시 현재 연결 상태 확인
@@ -27,8 +37,8 @@ export async function initChatProviders() {
     try {
       const result = await window.electronAPI?.invoke('chat:oauth:getStatus', { provider });
       if ((result as { connected?: boolean } | undefined)?.connected) {
-        if (provider === 'openai') jotaiStore.set(openaiStatusAtom, 'connected');
-        if (provider === 'google') jotaiStore.set(googleStatusAtom, 'connected');
+        if (provider === 'openai') useChatProviderStore.getState().setOpenaiStatus('connected');
+        if (provider === 'google') useChatProviderStore.getState().setGoogleStatus('connected');
       }
     } catch {
       // ignore — 미연결 상태로 유지
@@ -41,8 +51,8 @@ export async function initChatProviders() {
 // ---------------------------------------------------------------------------
 
 export async function startOAuth(provider: ChatProvider) {
-  if (provider === 'openai') jotaiStore.set(openaiStatusAtom, 'connecting');
-  if (provider === 'google') jotaiStore.set(googleStatusAtom, 'connecting');
+  if (provider === 'openai') useChatProviderStore.getState().setOpenaiStatus('connecting');
+  if (provider === 'google') useChatProviderStore.getState().setGoogleStatus('connecting');
   await window.electronAPI?.invoke('chat:oauth:start', { provider });
 }
 
@@ -52,10 +62,10 @@ export async function startOAuth(provider: ChatProvider) {
 
 export function handleOAuthResult(provider: ChatProvider, success: boolean) {
   if (provider === 'openai') {
-    jotaiStore.set(openaiStatusAtom, success ? 'connected' : 'disconnected');
+    useChatProviderStore.getState().setOpenaiStatus(success ? 'connected' : 'disconnected');
   }
   if (provider === 'google') {
-    jotaiStore.set(googleStatusAtom, success ? 'connected' : 'disconnected');
+    useChatProviderStore.getState().setGoogleStatus(success ? 'connected' : 'disconnected');
   }
 }
 
@@ -65,8 +75,8 @@ export function handleOAuthResult(provider: ChatProvider, success: boolean) {
 
 export async function disconnectProvider(provider: ChatProvider) {
   await window.electronAPI?.invoke('chat:oauth:disconnect', { provider });
-  if (provider === 'openai') jotaiStore.set(openaiStatusAtom, 'disconnected');
-  if (provider === 'google') jotaiStore.set(googleStatusAtom, 'disconnected');
+  if (provider === 'openai') useChatProviderStore.getState().setOpenaiStatus('disconnected');
+  if (provider === 'google') useChatProviderStore.getState().setGoogleStatus('disconnected');
 }
 
 // ---------------------------------------------------------------------------

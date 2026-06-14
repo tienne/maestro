@@ -9,11 +9,10 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { skipToken } from '@tanstack/react-query';
-import { useAtom } from 'jotai';
 import { trpc } from '../../lib/trpc';
 import { ModelSelector } from './ModelSelector';
 import { handleOAuthResult, getAccessToken } from '../../store/chatProviderStore';
-import { lastChatProviderAtom, lastChatModelAtom } from '../../store/settingsStore';
+import { useSettingsStore } from '../../store/settingsStore';
 import { CHAT_MODELS, type ChatProvider, type ChatMessage } from '@maestro/shared-types';
 
 // ── 스트리밍 입력 타입 (실제 chatRouter.stream input과 일치) ─────────────────────
@@ -137,8 +136,10 @@ interface WorkspaceChatProps {
 
 export function WorkspaceChat({ workspaceId }: WorkspaceChatProps) {
   // ── 프로바이더/모델 상태 (settingsStore 연동) ─────────────────────────────────
-  const [savedProvider, setSavedProvider] = useAtom(lastChatProviderAtom);
-  const [savedModel, setSavedModel] = useAtom(lastChatModelAtom);
+  const savedProvider = useSettingsStore((s) => s.lastChatProvider);
+  const setSavedProvider = useSettingsStore((s) => s.setLastChatProvider);
+  const savedModel = useSettingsStore((s) => s.lastChatModel);
+  const setSavedModel = useSettingsStore((s) => s.setLastChatModel);
 
   const [selectedProvider, setSelectedProvider] = useState<ChatProvider>(
     (savedProvider as ChatProvider | undefined) ?? DEFAULT_PROVIDER

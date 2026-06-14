@@ -83,6 +83,12 @@ export class DatabaseManager {
     const migrationsFolder = path.join(__dirname, '..', 'drizzle');
     this.migrate(migrationsFolder);
 
+    // 마이그레이션이 실패하거나 mock된 경우 핵심 테이블이 없을 수 있으므로 guard
+    const sessionsExist = !!this.db
+      .prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name='sessions'`)
+      .get();
+    if (!sessionsExist) return;
+
     // 앱 재시작 시 PTY 프로세스는 모두 사라지므로 running/pending → stopped 리셋
     this.db.exec(`UPDATE sessions SET status = 'stopped', pid = NULL WHERE status IN ('running', 'pending')`);
 
@@ -99,6 +105,7 @@ export class DatabaseManager {
     this.migrateM10Plugins();
     this.migrateM11AgentEditor();
     this.migrateM12ChatHistory();
+    this.migrateM13AppState();
   }
 
   /** M2-06: sessions 테이블에 is_favorite 컬럼 추가 (기존 DB 마이그레이션) */
@@ -441,6 +448,16 @@ export class DatabaseManager {
       );
       CREATE INDEX IF NOT EXISTS idx_chat_sessions_workspace ON chat_sessions(workspace_id);
       CREATE INDEX IF NOT EXISTS idx_chat_messages_session ON chat_messages(session_id, created_at);
+    `);
+  }
+
+  /** M13: app_state 테이블 생성 (lowdb → SQLite 전환) */
+  private migrateM13AppState(): void {
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS app_state (
+        key   TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      );
     `);
   }
 

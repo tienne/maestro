@@ -1,12 +1,6 @@
-import { useAtom } from 'jotai';
 import { CHAT_MODELS, type ChatProvider, type ChatModel } from '@maestro/shared-types';
-import { anthropicIsAuthenticatedAtom } from '../../store/anthropicAuthStore';
-import {
-  openaiStatusAtom,
-  googleStatusAtom,
-  startOAuth,
-  disconnectProvider,
-} from '../../store/chatProviderStore';
+import { useAnthropicAuthStore } from '../../store/anthropicAuthStore';
+import { useChatProviderStore, startOAuth, disconnectProvider } from '../../store/chatProviderStore';
 
 interface Props {
   selectedProvider: ChatProvider;
@@ -31,9 +25,9 @@ const modelsByProvider = CHAT_MODELS.reduce(
 );
 
 export function ModelSelector({ selectedProvider, selectedModel, onSelect }: Props) {
-  const [anthropicAuth] = useAtom(anthropicIsAuthenticatedAtom);
-  const [openaiStatus] = useAtom(openaiStatusAtom);
-  const [googleStatus] = useAtom(googleStatusAtom);
+  const anthropicAuth = useAnthropicAuthStore((s) => s.isAuthenticated);
+  const openaiStatus = useChatProviderStore((s) => s.openaiStatus);
+  const googleStatus = useChatProviderStore((s) => s.googleStatus);
 
   const statusMap: Record<ChatProvider, boolean> = {
     anthropic: anthropicAuth,

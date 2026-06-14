@@ -1,5 +1,4 @@
-import { atom, getDefaultStore } from 'jotai';
-import { useAtom } from 'jotai';
+import { create } from 'zustand';
 
 // ---------------------------------------------------------------------------
 // 타입 정의
@@ -9,173 +8,127 @@ type AuthSource = 'claude-config' | 'keychain' | 'mastracode';
 type AuthStatus = 'checking' | 'authenticated' | 'unauthenticated' | 'expired';
 
 // ---------------------------------------------------------------------------
-// Base atoms
+// Zustand 스토어
 // ---------------------------------------------------------------------------
 
-export const anthropicStatusAtom = atom<AuthStatus>('checking');
-export const anthropicIsAuthenticatedAtom = atom<boolean>(false);
-export const anthropicSourceAtom = atom<AuthSource | undefined>(undefined);
-export const anthropicExpiresAtAtom = atom<number | undefined>(undefined);
-export const anthropicIsLoadingAtom = atom<boolean>(false);
-export const anthropicErrorAtom = atom<string | undefined>(undefined);
-/** 내부용: IPC 이벤트 리스너 정리 함수 */
-const anthropicCleanupFnAtom = atom<(() => void) | undefined>(undefined);
-
-// ---------------------------------------------------------------------------
-// Jotai store instance — 액션 atom에서 직접 store 접근용
-// ---------------------------------------------------------------------------
-
-const jotaiStore = getDefaultStore();
-
-// ---------------------------------------------------------------------------
-// Action atoms
-// ---------------------------------------------------------------------------
-
-export const checkAnthropicStatusAtom = atom(null, async (_get, set) => {
-  set(anthropicIsLoadingAtom, true);
-  try {
-    const result = (await window.electronAPI?.invoke('anthropic:getAuthStatus')) as
-      | {
-          isAuthenticated: boolean;
-          source?: AuthSource;
-          expiresAt?: number;
-          isExpired?: boolean;
-        }
-      | undefined;
-
-    if (!result) {
-      set(anthropicIsLoadingAtom, false);
-      set(anthropicStatusAtom, 'unauthenticated');
-      set(anthropicIsAuthenticatedAtom, false);
-      return;
-    }
-
-    let status: AuthStatus;
-    if (result.isExpired) {
-      status = 'expired';
-    } else if (result.isAuthenticated) {
-      status = 'authenticated';
-    } else {
-      status = 'unauthenticated';
-    }
-
-    set(anthropicIsAuthenticatedAtom, result.isAuthenticated);
-    set(anthropicStatusAtom, status);
-    set(anthropicSourceAtom, result.source);
-    set(anthropicExpiresAtAtom, result.expiresAt);
-    set(anthropicIsLoadingAtom, false);
-    set(anthropicErrorAtom, undefined);
-  } catch {
-    set(anthropicIsLoadingAtom, false);
-    set(anthropicStatusAtom, 'unauthenticated');
-    set(anthropicIsAuthenticatedAtom, false);
-  }
-});
-
-export const openAnthropicOAuthAtom = atom(null, async (_get, set) => {
-  set(anthropicIsLoadingAtom, true);
-  set(anthropicErrorAtom, undefined);
-  try {
-    const result = (await window.electronAPI?.invoke('anthropic:openOAuth')) as
-      | { success: boolean; error?: string }
-      | undefined;
-
-    if (result?.success) {
-      await jotaiStore.set(checkAnthropicStatusAtom);
-    } else {
-      set(anthropicIsLoadingAtom, false);
-      set(anthropicErrorAtom, result?.error ?? 'oauth_failed');
-    }
-  } catch {
-    set(anthropicIsLoadingAtom, false);
-    set(anthropicErrorAtom, 'unexpected_error');
-  }
-});
-
-export const initializeAnthropicAuthAtom = atom(null, (_get, set) => {
-  void jotaiStore.set(checkAnthropicStatusAtom);
-
-  // contextBridge는 함수를 반환하는 함수를 지원하지 않으므로
-  // onEvent() 반환값을 직접 저장하지 않고 offEvent를 사용하는 클로저로 대체한다
-  window.electronAPI?.onEvent('anthropic:reauth-required', () => {
-    set(anthropicStatusAtom, 'expired');
-    set(anthropicIsAuthenticatedAtom, false);
-  });
-
-  set(anthropicCleanupFnAtom, () => {
-    window.electronAPI?.offEvent('anthropic:reauth-required');
-  });
-});
-
-export const cleanupAnthropicAuthAtom = atom(null, (_get, _set) => {
-  const fn = jotaiStore.get(anthropicCleanupFnAtom);
-  if (typeof fn === 'function') fn();
-});
-
-// ---------------------------------------------------------------------------
-// Zustand 호환 스토어 인터페이스
-// ---------------------------------------------------------------------------
-
-interface AnthropicAuthSnapshot {
+interface AnthropicAuthStore {
   status: AuthStatus;
   isAuthenticated: boolean;
   source?: AuthSource;
   expiresAt?: number;
   isLoading: boolean;
   error?: string;
+  /** 내부용: IPC 이벤트 리스너 정리 함수 */
+  _cleanupFn?: () => void;
+  // Actions
+  _setStatus: (status: AuthStatus) => void;
+  _setIsAuthenticated: (isAuthenticated: boolean) => void;
+  _setSource: (source: AuthSource | undefined) => void;
+  _setExpiresAt: (expiresAt: number | undefined) => void;
+  _setIsLoading: (isLoading: boolean) => void;
+  _setError: (error: string | undefined) => void;
+  _setCleanupFn: (fn: (() => void) | undefined) => void;
+  // Public actions
   checkStatus: () => Promise<void>;
   openOAuth: () => Promise<void>;
   initialize: () => void;
   cleanup: () => void;
 }
 
-function buildSnapshot(
-  status: AuthStatus,
-  isAuthenticated: boolean,
-  source: AuthSource | undefined,
-  expiresAt: number | undefined,
-  isLoading: boolean,
-  error: string | undefined
-): AnthropicAuthSnapshot {
-  return {
-    status,
-    isAuthenticated,
-    source,
-    expiresAt,
-    isLoading,
-    error,
-    checkStatus: () => jotaiStore.set(checkAnthropicStatusAtom),
-    openOAuth: () => jotaiStore.set(openAnthropicOAuthAtom),
-    initialize: () => jotaiStore.set(initializeAnthropicAuthAtom),
-    cleanup: () => jotaiStore.set(cleanupAnthropicAuthAtom),
-  };
-}
+export const useAnthropicAuthStore = create<AnthropicAuthStore>((set, get) => ({
+  status: 'checking',
+  isAuthenticated: false,
+  source: undefined,
+  expiresAt: undefined,
+  isLoading: false,
+  error: undefined,
+  _cleanupFn: undefined,
 
-/** 기존 `useAnthropicAuthStore((s) => s.field)` selector 패턴 호환 */
-export function useAnthropicAuthStore(): AnthropicAuthSnapshot;
-export function useAnthropicAuthStore<T>(selector: (state: AnthropicAuthSnapshot) => T): T;
-export function useAnthropicAuthStore<T>(
-  selector?: (state: AnthropicAuthSnapshot) => T
-): AnthropicAuthSnapshot | T {
-  const [status] = useAtom(anthropicStatusAtom);
-  const [isAuthenticated] = useAtom(anthropicIsAuthenticatedAtom);
-  const [source] = useAtom(anthropicSourceAtom);
-  const [expiresAt] = useAtom(anthropicExpiresAtAtom);
-  const [isLoading] = useAtom(anthropicIsLoadingAtom);
-  const [error] = useAtom(anthropicErrorAtom);
+  _setStatus: (status) => set({ status }),
+  _setIsAuthenticated: (isAuthenticated) => set({ isAuthenticated }),
+  _setSource: (source) => set({ source }),
+  _setExpiresAt: (expiresAt) => set({ expiresAt }),
+  _setIsLoading: (isLoading) => set({ isLoading }),
+  _setError: (error) => set({ error }),
+  _setCleanupFn: (_cleanupFn) => set({ _cleanupFn }),
 
-  const snapshot = buildSnapshot(status, isAuthenticated, source, expiresAt, isLoading, error);
-  if (selector) return selector(snapshot);
-  return snapshot;
-}
+  checkStatus: async () => {
+    set({ isLoading: true });
+    try {
+      const result = (await window.electronAPI?.invoke('anthropic:getAuthStatus')) as
+        | {
+            isAuthenticated: boolean;
+            source?: AuthSource;
+            expiresAt?: number;
+            isExpired?: boolean;
+          }
+        | undefined;
 
-/** 기존 `useAnthropicAuthStore.getState()` 패턴 호환 */
-useAnthropicAuthStore.getState = (): AnthropicAuthSnapshot =>
-  buildSnapshot(
-    jotaiStore.get(anthropicStatusAtom),
-    jotaiStore.get(anthropicIsAuthenticatedAtom),
-    jotaiStore.get(anthropicSourceAtom),
-    jotaiStore.get(anthropicExpiresAtAtom),
-    jotaiStore.get(anthropicIsLoadingAtom),
-    jotaiStore.get(anthropicErrorAtom)
-  );
+      if (!result) {
+        set({ isLoading: false, status: 'unauthenticated', isAuthenticated: false });
+        return;
+      }
+
+      let status: AuthStatus;
+      if (result.isExpired) {
+        status = 'expired';
+      } else if (result.isAuthenticated) {
+        status = 'authenticated';
+      } else {
+        status = 'unauthenticated';
+      }
+
+      set({
+        isAuthenticated: result.isAuthenticated,
+        status,
+        source: result.source,
+        expiresAt: result.expiresAt,
+        isLoading: false,
+        error: undefined,
+      });
+    } catch {
+      set({ isLoading: false, status: 'unauthenticated', isAuthenticated: false });
+    }
+  },
+
+  openOAuth: async () => {
+    set({ isLoading: true, error: undefined });
+    try {
+      const result = (await window.electronAPI?.invoke('anthropic:openOAuth')) as
+        | { success: boolean; error?: string }
+        | undefined;
+
+      if (result?.success) {
+        await get().checkStatus();
+      } else {
+        set({ isLoading: false, error: result?.error ?? 'oauth_failed' });
+      }
+    } catch {
+      set({ isLoading: false, error: 'unexpected_error' });
+    }
+  },
+
+  initialize: () => {
+    void get().checkStatus();
+
+    window.electronAPI?.onEvent('anthropic:reauth-required', () => {
+      set({ status: 'expired', isAuthenticated: false });
+    });
+
+    set({
+      _cleanupFn: () => {
+        window.electronAPI?.offEvent('anthropic:reauth-required');
+      },
+    });
+  },
+
+  cleanup: () => {
+    const fn = get()._cleanupFn;
+    if (typeof fn === 'function') fn();
+  },
+}));
+
+// ---------------------------------------------------------------------------
+// 하위 호환: anthropicIsAuthenticatedAtom을 읽던 코드가 없으므로 export 불필요.
+// ModelSelector.tsx가 useAnthropicAuthStore를 직접 사용하도록 변경됨.
+// ---------------------------------------------------------------------------
