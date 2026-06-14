@@ -40,6 +40,10 @@
       "options": {
         "cwd": "apps/desktop"
       }
+    },
+    "lint": {
+      "command": "eslint src",
+      "options": { "cwd": "apps/desktop" }
     }
   }
 }

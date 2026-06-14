@@ -43,6 +43,12 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Typecheck
+        run: pnpm nx run desktop:typecheck
+
+      - name: Test
+        run: pnpm nx run desktop:test
+
       - name: Build renderer (web)
         run: pnpm nx build web
 
