@@ -275,7 +275,9 @@ app.on('before-quit', async () => {
     // ignore
   }
 
-  const { cleanupServices } = await import('../handlers/index');
-  await cleanupServices();
+  const { getPtyManager } = await import('../services/pty-manager');
+  const { closeDatabaseManager } = await import('../db/database');
+  getPtyManager().killAll();
+  closeDatabaseManager();
 });
 

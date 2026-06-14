@@ -6,6 +6,7 @@ import { serve } from '@hono/node-server';
 import { fetchRequestHandler } from '@trpc/server/adapters/fetch';
 import { appRouter } from './router';
 import { tokenManager } from './token-manager';
+import log from 'electron-log';
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Server = any;
 
@@ -27,7 +28,7 @@ app.all('/trpc/*', (c: Context) => {
 // OAuth 토큰 만료 감지 + 자동 갱신 + 재인증 신호 전송 초기화
 // 실패해도 서버 기동을 막지 않는다
 tokenManager.initialize().catch((err) => {
-  console.error('[host-service] tokenManager.initialize failed:', err);
+  log.error('[host-service] tokenManager.initialize failed:', err);
 });
 
 const requestedPort = process.env['PORT'] ? parseInt(process.env['PORT'], 10) : 0;
@@ -39,7 +40,9 @@ const server: Server = serve(
     port: requestedPort,
   },
   (info: { port: number }) => {
-    // main process가 이 출력을 파싱해 포트를 인식한다
+    log.info(`[host-service] server listening on port ${info.port}`);
+    // main process가 이 stdout 출력을 파싱해 포트를 인식한다
+    // electron-log로 교체 불가: main 프로세스가 stdout에서 이 문자열을 파싱함
     console.log(`HOST_SERVICE_PORT=${info.port}`);
   }
 );

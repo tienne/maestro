@@ -13,6 +13,7 @@ import {
   saveAnthropicCredentialToAuthStorage,
   type AnthropicCredential,
 } from './credential'
+import log from 'electron-log'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -223,8 +224,10 @@ export class TokenManager extends EventEmitter {
   private _emitReauthRequired(): void {
     this.emit('reauth-required')
 
+    log.warn('[token-manager] reauth required — emitting HOST_REAUTH_REQUIRED signal')
     // stdout 특수 메시지 — Electron main의 stdout 파서가 감지
     // (index.ts의 HOST_SERVICE_PORT= 패턴과 동일한 방식)
+    // electron-log로 교체 불가: main 프로세스가 stdout에서 이 문자열을 파싱함
     console.log('HOST_REAUTH_REQUIRED')
 
     // IPC 채널이 열려 있으면 구조화 메시지도 전송

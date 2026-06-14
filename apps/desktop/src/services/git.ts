@@ -2,6 +2,7 @@ import { execSync, exec } from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import { promisify } from 'util';
+import log from 'electron-log';
 
 const execAsync = promisify(exec);
 
@@ -101,7 +102,7 @@ export class GitService {
       }
     } catch (error) {
       // cleanup: worktree 디렉토리가 이미 생성됐으면 제거
-      await this.execAsync(`git worktree remove --force "${worktreePath}"`, repoPath).catch(() => {});
+      await this.execAsync(`git worktree remove --force "${worktreePath}"`, repoPath).catch((err: unknown) => log.warn('[git]', err));
       throw error;
     }
   }
@@ -117,10 +118,10 @@ export class GitService {
 
   async removeWorktree(repoPath: string, worktreePath: string): Promise<void> {
     // 1. git worktree 메타데이터 제거
-    await this.execAsync(`git worktree remove --force "${worktreePath}"`, repoPath).catch(() => {});
+    await this.execAsync(`git worktree remove --force "${worktreePath}"`, repoPath).catch((err: unknown) => log.warn('[git]', err));
 
     // 2. stale 항목 정리
-    await this.execAsync('git worktree prune', repoPath).catch(() => {});
+    await this.execAsync('git worktree prune', repoPath).catch((err: unknown) => log.warn('[git]', err));
 
     // 3. 디렉토리가 남아있으면 강제 삭제 (git이 못 지운 경우 대비)
     try {
@@ -128,7 +129,7 @@ export class GitService {
         fs.rmSync(worktreePath, { recursive: true, force: true });
       }
     } catch (err) {
-      console.warn('removeWorktree: failed to delete directory:', err);
+      log.warn('[git] removeWorktree: failed to delete directory:', err);
     }
   }
 

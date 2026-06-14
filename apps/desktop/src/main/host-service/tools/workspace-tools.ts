@@ -11,6 +11,7 @@
 import { createTool } from '@mastra/core/tools';
 import { z } from 'zod';
 import fs from 'node:fs/promises';
+import fsSync from 'node:fs';
 import path from 'node:path';
 
 // ── 공통 유틸 ─────────────────────────────────────────────────────────────────
@@ -25,6 +26,17 @@ function resolveSafe(workspacePath: string, relativePath: string): string {
     throw new Error(
       `[workspace-tools] Path traversal 감지: "${relativePath}" 는 workspacePath 밖입니다.`,
     );
+  }
+  // 심볼릭 링크가 실제로 workspace 외부를 가리키는지 확인
+  try {
+    const real = fsSync.realpathSync(resolved);
+    const realWorkspace = fsSync.realpathSync(workspacePath);
+    if (!real.startsWith(realWorkspace)) {
+      throw new Error(`[workspace-tools] 심볼릭 링크 탈출 감지: "${relativePath}"`);
+    }
+  } catch (err: unknown) {
+    // 파일이 아직 존재하지 않으면 (쓰기 전 경로 검증) 기존 검사만으로 충분
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
   }
   return resolved;
 }

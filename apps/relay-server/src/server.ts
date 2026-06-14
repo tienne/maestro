@@ -72,6 +72,9 @@ export function createServer(): http.Server {
         return;
       }
 
+      // type 필드 검증
+      if (typeof msg.type !== 'string') return;
+
       const meta = clientMeta.get(ws);
       if (!meta) return;
 
@@ -88,6 +91,8 @@ export function createServer(): http.Server {
       } else {
         // 모바일 → 데스크탑 전달
         if (msg.type === 'session:input') {
+          if (typeof msg.sessionId !== 'string' || msg.sessionId.length > 128) return;
+          if (typeof msg.data !== 'string' || msg.data.length > 65536) return; // 64KB 제한
           roomManager.sendToDesktop(meta.userId, JSON.stringify(msg));
         }
       }

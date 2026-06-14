@@ -18,6 +18,7 @@ import { resolveAnthropicCredential } from './credential';
 import { createModel, DEFAULT_MODEL, type ModelConfig } from './ai-providers';
 import { workspaceTools } from './tools/workspace-tools';
 import { taskExecutionWorkflow } from './workflows/task-execution-workflow';
+import log from 'electron-log';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -84,7 +85,7 @@ export class MastraManager {
     });
 
     this.initialized = true;
-    console.log('[mastra-manager] Mastra 초기화 완료 (InMemoryStore)');
+    log.info('[mastra-manager] Mastra 초기화 완료 (InMemoryStore)');
   }
 
   /**
@@ -130,7 +131,7 @@ export class MastraManager {
     });
 
     this.workspaceAgents.set(workspaceId, agent);
-    console.log(`[mastra-manager] Agent 생성: workspaceId=${workspaceId}, name=${config.name}`);
+    log.info(`[mastra-manager] Agent 생성: workspaceId=${workspaceId}, name=${config.name}`);
     return agent;
   }
 
@@ -140,7 +141,7 @@ export class MastraManager {
   async destroyAgent(workspaceId: string): Promise<void> {
     const removed = this.workspaceAgents.delete(workspaceId);
     if (removed) {
-      console.log(`[mastra-manager] Agent 제거: workspaceId=${workspaceId}`);
+      log.info(`[mastra-manager] Agent 제거: workspaceId=${workspaceId}`);
     }
   }
 
@@ -197,7 +198,7 @@ export class MastraManager {
     this.mastra = null;
     this.storage = null;
     this.initialized = false;
-    console.log('[mastra-manager] MastraManager 종료');
+    log.info('[mastra-manager] MastraManager 종료');
   }
 }
 

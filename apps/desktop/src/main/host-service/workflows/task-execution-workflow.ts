@@ -13,6 +13,7 @@
 
 import { createWorkflow, createStep } from '@mastra/core/workflows';
 import { z } from 'zod';
+import log from 'electron-log';
 
 // ── 입력 스키마 ────────────────────────────────────────────────────────────────
 
@@ -83,7 +84,7 @@ const planStep = createStep({
   execute: async ({ inputData }) => {
     const { taskDescription, workspacePath, workspaceId } = inputData;
 
-    console.log(`[task-execution-workflow/plan] 계획 수립 시작: "${taskDescription}"`);
+    log.info(`[task-execution-workflow/plan] 계획 수립 시작: "${taskDescription}"`);
 
     // 태스크 설명에서 파일 시스템 작업 키워드를 파싱해 계획 수립
     // 실제 환경에서는 LLM agent.generate()로 교체한다
@@ -94,7 +95,7 @@ const planStep = createStep({
       steps: planSteps,
     };
 
-    console.log(`[task-execution-workflow/plan] 계획 수립 완료: ${plan.steps.length}단계`);
+    log.info(`[task-execution-workflow/plan] 계획 수립 완료: ${plan.steps.length}단계`);
 
     return {
       taskDescription,
@@ -119,7 +120,7 @@ const executeStep = createStep({
   execute: async ({ inputData }) => {
     const { taskDescription, workspacePath, workspaceId, plan } = inputData;
 
-    console.log(`[task-execution-workflow/execute] 실행 시작: ${plan.steps.length}단계`);
+    log.info(`[task-execution-workflow/execute] 실행 시작: ${plan.steps.length}단계`);
 
     // node:fs/promises를 동적으로 import한다 (ESM/CJS 호환)
     const fs = await import('node:fs/promises');
@@ -169,10 +170,10 @@ const executeStep = createStep({
           output,
         });
 
-        console.log(`[task-execution-workflow/execute] 단계 ${step.order} 완료: ${step.action} ${step.target}`);
+        log.info(`[task-execution-workflow/execute] 단계 ${step.order} 완료: ${step.action} ${step.target}`);
       } catch (err) {
         const errorMessage = err instanceof Error ? err.message : String(err);
-        console.error(`[task-execution-workflow/execute] 단계 ${step.order} 실패: ${errorMessage}`);
+        log.error(`[task-execution-workflow/execute] 단계 ${step.order} 실패: ${errorMessage}`);
 
         results.push({
           order: step.order,
@@ -215,7 +216,7 @@ const verifyStep = createStep({
       ? `태스크 "${taskDescription}" 완료 — ${completedSteps}/${results.length}단계 성공`
       : `태스크 "${taskDescription}" 부분 실패 — ${completedSteps}/${results.length}단계 성공, ${failedSteps}단계 실패`;
 
-    console.log(`[task-execution-workflow/verify] 검증 완료: ${summary}`);
+    log.info(`[task-execution-workflow/verify] 검증 완료: ${summary}`);
 
     return {
       workspaceId,
